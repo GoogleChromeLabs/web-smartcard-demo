@@ -1,0 +1,27 @@
+{
+  "id": "/",
+  "short_name": "Smart Card Demo",
+  "name": "Smart Card Demo",
+  "version": "0.0.1",
+  "icons": [
+    {
+      "src": "images/smart-id-128.png",
+      "type": "image/png",
+      "sizes": "128x128",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "images/smart-id-512.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any maskable"
+    }
+  ],
+  "start_url": "/",
+  "display": "standalone",
+  "scope": "/",
+  "permissions_policy": {
+    "cross-origin-isolated": ["self"],
+    "smart-card": ["self"]
+  }
+}
