@@ -14,3 +14,66 @@
  * limitations under the License.
  */
 
+import {SmartCardContext} from './smart-card'
+
+let refreshReadersButton: HTMLButtonElement;
+let readersListElement: HTMLDivElement;
+let scardContext: SmartCardContext | undefined;
+
+async function refreshReadersList() {
+  if (!scardContext) {
+    return;
+  }
+
+  var readers = undefined;
+  try {
+    readers = await scardContext.listReaders();
+  } catch (e) {
+    readersListElement.innerText = "Failed to list readers: " + e.message;
+    return;
+  }
+
+  // Clear the list
+  readersListElement.textContent = "";
+
+  if (readers.length === 0) {
+    readersListElement.innerText = "No smart card readers available.";
+    return;
+  }
+
+  var needsDivider = false;
+  readers.forEach((readerName) => {
+    if (needsDivider) {
+      readersListElement.appendChild(document.createElement("hr"));
+    }
+    const p = document.createElement("p");
+
+    const span = document.createElement("span");
+    span.innerText = readerName;
+
+    const readCertificatesButton = document.createElement("button");
+    readCertificatesButton.innerText = "Read certificates";
+
+    p.appendChild(span);
+    p.appendChild(readCertificatesButton);
+    readersListElement.appendChild(p);
+
+    needsDivider = true;
+  });
+}
+
+document.addEventListener('DOMContentLoaded', async () => {
+
+  readersListElement = document.getElementById('readers-list') as HTMLDivElement;
+
+  refreshReadersButton = document.getElementById('refresh-readers') as HTMLButtonElement;
+  refreshReadersButton.addEventListener('click', refreshReadersList);
+
+  try {
+    scardContext = await navigator.smartCard.establishContext();
+  } catch (e) {
+    readersListElement.innerText = "Failed to establish context: " + e.message;
+    scardContext = undefined;
+    refreshReadersButton.disabled = true;
+  }
+});
