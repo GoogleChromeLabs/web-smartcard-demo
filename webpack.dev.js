@@ -23,4 +23,8 @@ module.exports = merge(common, {
   output: {
     publicPath: ''
   },
+  devServer: {
+    hot: false,
+    liveReload: false,
+  }
 });
