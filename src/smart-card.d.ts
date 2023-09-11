@@ -28,9 +28,22 @@ export interface SmartCardConnectResult {
   activeProtocol?: SmartCardProtocol;
 }
 
+// https://wicg.github.io/web-smart-card/#dom-smartcarddisposition
+export type SmartCardDisposition =
+  "leave" | "reset" | "unpower" | "eject";
+
+// https://wicg.github.io/web-smart-card/#dom-smartcardtransactionoptions
+export interface SmartCardTransactionOptions {
+  signal?: AbortSignal;
+}
+
 // https://wicg.github.io/web-smart-card/#smartcardconnection-interface
 export interface SmartCardConnection {
+  startTransaction(transaction: SmartCardTransactionCallback,
+        options?: SmartCardTransactionOptions): Promise<undefined>;
 }
+export type SmartCardTransactionCallback =
+  () => Promise<SmartCardDisposition | undefined>;
 
 // https://wicg.github.io/web-smart-card/#dom-smartcardprotocol
 export type SmartCardProtocol = "raw" | "t0" | "t1";
