@@ -37,10 +37,19 @@ export interface SmartCardTransactionOptions {
   signal?: AbortSignal;
 }
 
+// https://wicg.github.io/web-smart-card/#dom-smartcardtransmitoptions
+export interface SmartCardTransmitOptions {
+  protocol?: SmartCardProtocol
+}
+
 // https://wicg.github.io/web-smart-card/#smartcardconnection-interface
 export interface SmartCardConnection {
   startTransaction(transaction: SmartCardTransactionCallback,
         options?: SmartCardTransactionOptions): Promise<undefined>;
+  disconnect( disposition?: SmartCardDisposition): Promise<undefined>;
+  transmit(sendBuffer: BufferSource,
+           options?: SmartCardTransmitOptions): Promise<ArrayBuffer>;
+
 }
 export type SmartCardTransactionCallback =
   () => Promise<SmartCardDisposition | undefined>;
