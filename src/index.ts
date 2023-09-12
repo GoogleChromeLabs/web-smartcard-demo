@@ -99,8 +99,8 @@ async function selectPIVApplication(scardConnection: SmartCardConnection) {
     // interindustry, no command chain, no secure messaging, logical channel 0
     cla: 0,
     ins: apdu.Instruction.Select,
-    p1: 0x04, // Select by DF name
-    p2: 0x00, // First or only occurrence
+    p1: apdu.SelectP1.SelectDFByName,
+    p2: apdu.SelectP2.FirstOrOnlyOccurrence,
     data: (new Uint8Array(pivAID)).buffer
   };
 

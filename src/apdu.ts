@@ -22,6 +22,14 @@ export enum Instruction {
   Verify = 0x20,
 }
 
+export enum SelectP1 {
+  SelectDFByName = 0x04,
+}
+
+export enum SelectP2 {
+  FirstOrOnlyOccurrence = 0x00,
+}
+
 export enum StatusWord {
   Success = 0x9000,
 }
