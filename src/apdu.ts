@@ -20,6 +20,7 @@ import { assert } from './util'
 export enum Instruction {
   Select = 0xA4,
   Verify = 0x20,
+  GetData = 0xCB,
 }
 
 export enum SelectP1 {
@@ -30,9 +31,19 @@ export enum SelectP2 {
   FirstOrOnlyOccurrence = 0x00,
 }
 
+export enum GetDataP {
+  CurrentDF = 0x3FFF, // Current Dedicated File
+}
+
 export enum StatusWord {
   Success = 0x9000,
 }
+
+// ISO/IEC 7816-4:2005
+// 8.5.1 Indirect references to data elements
+export const TagList:number = 0x5C; // Tag List
+
+export const DiscretionaryData = 0x53; // 'discretionary data' tag
 
 // ISO/IEC 7816-4:2005 Command APDU (Application Protocol Data Unit)
 export interface Command {
@@ -40,6 +51,13 @@ export interface Command {
   ins: Instruction,
   p1: number, // Parameter byte 1
   p2: number, // Parameter byte 2
+  data?: ArrayBuffer, // Command data
+  ne?: number // Maximum number of bytes expected in the response data field
+}
+export interface CommandP {
+  cla: number, // Class byte
+  ins: Instruction,
+  p: number, // Parameter bytes, big endian
   data?: ArrayBuffer, // Command data
   ne?: number // Maximum number of bytes expected in the response data field
 }
@@ -72,7 +90,7 @@ export function deserializeResponse(buffer: ArrayBuffer) : Response {
   };
 }
 
-export function serializeCommand(apdu: Command) : ArrayBuffer {
+export function serializeCommand(apdu: Command | CommandP) : ArrayBuffer {
   const headerSize:number = 4; // cla + ins + p1 + p2
 
   // 1) Find how many bytes we need
@@ -97,23 +115,31 @@ export function serializeCommand(apdu: Command) : ArrayBuffer {
 
   const buffer = new ArrayBuffer(apduSize);
   let i:number = 0;
-  const bytes = new Uint8Array(buffer);
-  bytes[i++] = apdu.cla;
-  bytes[i++] = apdu.ins;
-  bytes[i++] = apdu.p1;
-  bytes[i++] = apdu.p2;
+  const bytes = new DataView(buffer);
+  bytes.setUint8(i++, apdu.cla);
+  bytes.setUint8(i++, apdu.ins);
+  if ('p1' in apdu) {
+    const c = apdu as Command;
+    bytes.setUint8(i++, c.p1);
+    bytes.setUint8(i++, c.p2);
+  } else {
+    const c = apdu as CommandP;
+    bytes.setUint16(i, c.p);
+    i += 2;
+  }
   if (apdu.data !== undefined) {
     // Lc field
     // TODO Handle Lc fields bigger than 1 byte.
-    bytes[i++] = apdu.data.byteLength;
+    bytes.setUint8(i++, apdu.data.byteLength);
 
     // Command data
-    bytes.set(new Uint8Array(apdu.data), i);
+    const typedBytes = new Uint8Array(buffer);
+    typedBytes.set(new Uint8Array(apdu.data), i);
     i += apdu.data.byteLength;
   }
   if (apdu.ne !== undefined) {
     // TODO: consider an Ne which takes more than one byte
-    bytes[i++] = apdu.ne;
+    bytes.setUint8(i++, apdu.ne);
   }
   assert(i === apduSize, `serializeCommand: i=${i}, apduSize=${apduSize}`);
 

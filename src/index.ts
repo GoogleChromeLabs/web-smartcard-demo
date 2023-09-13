@@ -22,6 +22,13 @@ import {
 
 import * as apdu from './apdu'
 
+import {
+  assert,
+  numberByteSize,
+  readBERLength,
+  serializeNumber
+} from './util'
+
 let refreshReadersButton: HTMLButtonElement;
 let readersListElement: HTMLDivElement;
 let scardContext: SmartCardContext | undefined;
@@ -31,6 +38,18 @@ let scardContext: SmartCardContext | undefined;
 // IDentifier)
 const pivAID = [0xa0, 0x00, 0x00, 0x03, 0x08];
 
+// NIST.SP.800-73-4, part 1
+// Table 4b. PIV Card Application Key References
+enum PIVKeyID {
+  CardAuthentication = 0x9E,
+}
+
+// NIST.SP.800-73-4, part 1
+// Table 3. Object Identifiers of the PIV Data Objects for Interoperable Use
+enum PIVObjectTag {
+  // X.509 Certificate for Card Authentication
+  CertificateForCardAuthentication = 0x5FC101,
+}
 
 async function refreshReadersList() {
   if (!scardContext) {
@@ -79,21 +98,6 @@ async function refreshReadersList() {
   });
 }
 
-/*
-async function verify(scardConnection: SmartCardConnection) {
-  // Command to check whether verification is necessary
-  let checkVerificationNeeded = {
-    // interindustry, no command chain, no secure messaging, logical channel 0
-    cla: 0,
-    ins: Instruction.Verify,
-    p1: 0x00, // unused, must be zero
-    p2: 0x80 // Specific reference data
-  }
-
-  return scardConnection.transmit(serializeCommand(checkVerificationNeeded));
-}
-*/
-
 async function selectPIVApplication(scardConnection: SmartCardConnection) {
   const selectPIVApp = {
     // interindustry, no command chain, no secure messaging, logical channel 0
@@ -114,10 +118,71 @@ async function selectPIVApplication(scardConnection: SmartCardConnection) {
   }
 }
 
-async function readCertificates(scardConnection: SmartCardConnection)
-  : Promise<SmartCardDisposition> {
+async function fetchObject(scardConnection: SmartCardConnection,
+                           objectTag: number): Promise<ArrayBuffer> {
+  // NIST.SP.800-73-4, part 1
+  // 3.1.2 GET DATA Card Command
+
+  let objectTagByteSize:number = numberByteSize(objectTag);
+
+  assert(objectTagByteSize > 0 && objectTagByteSize <= 3,
+         `Invalid PIV objectTag byte size: ${objectTagByteSize}`);
+
+  const tagList = new Uint8Array(objectTagByteSize + 2);
+  let i:number = 0;
+
+  tagList[i++] = apdu.TagList;
+  tagList[i++] = objectTagByteSize;
+  serializeNumber(tagList, i, objectTag);
+
+  const getData = {
+    // CLA: interindustry, no command chain, no secure messaging, logical channel 0
+    cla: 0,
+    ins: apdu.Instruction.GetData,
+    p: apdu.GetDataP.CurrentDF,
+    data: tagList.buffer
+  };
+
+  let response:apdu.Response =
+    apdu.deserializeResponse(
+      await scardConnection.transmit(apdu.serializeCommand(getData)));
+
+  if (response.sw !== apdu.StatusWord.Success) {
+    throw new Error("Failed to fetch PIV object: SW=0x"
+                + response.sw.toString(16));
+  }
+
+  if (response.data === undefined) {
+    throw new Error("GET DATA response has no data");
+  }
+
+  const responseBytes = new Uint8Array(response.data);
+
+  if (responseBytes.byteLength < 2) {
+    throw new Error("GET DATA response is too short");
+  }
+
+  // Start reading the response
+
+  i = 0;
+
+  if (responseBytes[i++] !== apdu.DiscretionaryData) {
+    throw new Error("Invalid GET DATA response from PIV app");
+  }
+
+  let berLength = readBERLength(responseBytes, i);
+  i = berLength.valueOffset;
+
+  return responseBytes.slice(berLength.valueOffset,
+                             berLength.valueOffset + berLength.length).buffer;
+}
+
+async function readCertificate(scardConnection: SmartCardConnection)
+  : Promise<ArrayBuffer> {
   await selectPIVApplication(scardConnection);
-  return "reset";
+
+  return fetchObject(scardConnection,
+                     PIVObjectTag.CertificateForCardAuthentication);
 }
 
 async function readAndDisplayCertificates(readerName: string, div: HTMLDivElement) {
@@ -134,13 +199,21 @@ async function readAndDisplayCertificates(readerName: string, div: HTMLDivElemen
                              connectionResult.activeProtocol);
     }
 
+    let certData: ArrayBuffer = new ArrayBuffer(0);
+
     await connectionResult.connection.startTransaction(
-      ()=>{ return readCertificates(connectionResult.connection); });
+      async function () {
+        certData = await readCertificate(connectionResult.connection);
+        return "reset";
+      });
 
     connectionResult.connection.disconnect();
 
+
+    // TODO: parse and display certData
+
     const p = document.createElement("p");
-    p.innerText = "So far so good";
+    p.innerText = `Certificate has ${certData.byteLength} bytes!`;
     div.appendChild(p);
 
   } catch(e) {
