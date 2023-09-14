@@ -33,6 +33,8 @@ let refreshReadersButton: HTMLButtonElement;
 let readersListElement: HTMLDivElement;
 let scardContext: SmartCardContext | undefined;
 
+const maxDataLength = 70000;
+
 // PIV Card Application AID (Application Identifier)
 // Note that this is just the NIST RID (Registered Application Provider
 // IDentifier)
@@ -112,11 +114,17 @@ async function selectPIVApplication(scardConnection: SmartCardConnection) {
     apdu.deserializeResponse(
       await scardConnection.transmit(apdu.serializeCommand(selectPIVApp)));
 
-  if (response.sw !== apdu.StatusWord.Success) {
+  if (response.sw !== apdu.SW.Success) {
     throw new Error("Failed to select PIV application: SW=0x"
                 + response.sw.toString(16));
   }
 }
+
+const toHexString = (bytes: any) => {
+  return Array.from(bytes, (byte: number) => {
+    return ('0' + (byte & 0xff).toString(16)).slice(-2);
+  }).join('');
+};
 
 async function fetchObject(scardConnection: SmartCardConnection,
                            objectTag: number): Promise<ArrayBuffer> {
@@ -135,7 +143,7 @@ async function fetchObject(scardConnection: SmartCardConnection,
   tagList[i++] = objectTagByteSize;
   serializeNumber(tagList, i, objectTag);
 
-  const getData = {
+  let command: apdu.CommandP = {
     // CLA: interindustry, no command chain, no secure messaging, logical channel 0
     cla: 0,
     ins: apdu.Instruction.GetData,
@@ -143,38 +151,84 @@ async function fetchObject(scardConnection: SmartCardConnection,
     data: tagList.buffer
   };
 
-  let response:apdu.Response =
-    apdu.deserializeResponse(
-      await scardConnection.transmit(apdu.serializeCommand(getData)));
+  const bytes = new Uint8Array(maxDataLength);
+  let dataLength = 0;
 
-  if (response.sw !== apdu.StatusWord.Success) {
-    throw new Error("Failed to fetch PIV object: SW=0x"
-                + response.sw.toString(16));
+  // Get all data bytes.
+  // Can be a single GET DATA command if the data is small enough.
+  // Otherwise we will have to issue subsequent GET REPONSE commands
+  // until the entire data has been fetched.
+  while (true) {
+    let response:apdu.Response =
+      apdu.deserializeResponse(
+        await scardConnection.transmit(apdu.serializeCommand(command)));
+
+    if (response.sw !== apdu.SW.Success
+        && response.sw1 !== apdu.SW1.BytesStillAvailable) {
+      throw new Error("Failed to fetch PIV object: SW=0x"
+                  + response.sw.toString(16));
+    }
+
+    if (response.data === undefined) {
+      throw new Error("GET DATA response has no data");
+    }
+
+    if (dataLength + response.data.byteLength > maxDataLength) {
+      throw new Error(`GET DATA is larger than ${maxDataLength} bytes`);
+    }
+
+    const responseBytes = new Uint8Array(response.data);
+
+    console.log(`got ${responseBytes.byteLength} bytes`);
+    console.log(`responseBytes: ${toHexString(responseBytes)}`);
+
+    bytes.set(responseBytes, dataLength);
+    dataLength += responseBytes.byteLength;
+
+    if (response.sw === apdu.SW.Success) {
+      console.log(`success`);
+      break;
+    }
+
+    console.log(`needs to read ${response.sw2} more bytes`);
+
+    // There are more bytes to be read.
+    command = {
+      // CLA: interindustry, no command chain, no secure messaging, logical channel 0
+      cla: 0,
+      ins: apdu.Instruction.GetResponse,
+      p: apdu.GetResponseP.Unused,
+      ne: response.sw2
+    };
   }
 
-  if (response.data === undefined) {
-    throw new Error("GET DATA response has no data");
-  }
+  // Parse the data
 
-  const responseBytes = new Uint8Array(response.data);
-
-  if (responseBytes.byteLength < 2) {
+  if (dataLength < 2) {
     throw new Error("GET DATA response is too short");
   }
 
-  // Start reading the response
-
   i = 0;
 
-  if (responseBytes[i++] !== apdu.DiscretionaryData) {
-    throw new Error("Invalid GET DATA response from PIV app");
+  if (bytes[i++] !== apdu.DiscretionaryData) {
+    throw new Error("Invalid GET DATA response from PIV app: not descretionary data");
   }
 
-  let berLength = readBERLength(responseBytes, i);
+  let berLength = readBERLength(bytes, i);
   i = berLength.valueOffset;
 
-  return responseBytes.slice(berLength.valueOffset,
-                             berLength.valueOffset + berLength.length).buffer;
+  console.log(`berLength.valueOffset: ${berLength.valueOffset}`);
+  console.log(`berLength.length: ${berLength.length}`);
+  console.log(`dataLength: ${dataLength}`);
+
+  console.log(`bytes: ${toHexString(bytes.slice(0, dataLength))}`);
+
+  if (berLength.valueOffset + berLength.length !== dataLength) {
+    throw new Error("Invalid GET DATA response from PIV app: bad BER encoding");
+  }
+
+  return bytes.slice(berLength.valueOffset,
+                     berLength.valueOffset + berLength.length).buffer;
 }
 
 async function readCertificate(scardConnection: SmartCardConnection)

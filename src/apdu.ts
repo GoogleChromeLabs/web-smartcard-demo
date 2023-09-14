@@ -21,6 +21,7 @@ export enum Instruction {
   Select = 0xA4,
   Verify = 0x20,
   GetData = 0xCB,
+  GetResponse = 0xC0,
 }
 
 export enum SelectP1 {
@@ -31,12 +32,20 @@ export enum SelectP2 {
   FirstOrOnlyOccurrence = 0x00,
 }
 
+export enum GetResponseP {
+  Unused = 0x00,
+}
+
 export enum GetDataP {
   CurrentDF = 0x3FFF, // Current Dedicated File
 }
 
-export enum StatusWord {
+export enum SW {
   Success = 0x9000,
+}
+
+export enum SW1 {
+  BytesStillAvailable = 0x61,
 }
 
 // ISO/IEC 7816-4:2005
@@ -65,7 +74,9 @@ export interface CommandP {
 // ISO/IEC 7816-4:2005 Response APDU
 export interface Response {
   data?: ArrayBuffer,
-  sw: number, // Status bytes
+  sw: number, // Status bytes (1 and 2 together)
+  sw1: number, // Status byte 1
+  sw2: number, // Status byte 2
 }
 
 export function deserializeResponse(buffer: ArrayBuffer) : Response {
@@ -80,13 +91,17 @@ export function deserializeResponse(buffer: ArrayBuffer) : Response {
 
   if (buffer.byteLength === statusBytesLength) {
     return {
-      sw: swBytes.getUint16(0)
+      sw: swBytes.getUint16(0),
+      sw1: swBytes.getUint8(0),
+      sw2: swBytes.getUint8(1),
     };
   }
 
   return {
     data: (new Uint8Array(buffer, 0, buffer.byteLength - statusBytesLength)).buffer,
-    sw: swBytes.getUint16(0)
+    sw: swBytes.getUint16(0),
+    sw1: swBytes.getUint8(0),
+    sw2: swBytes.getUint8(1),
   };
 }
 
