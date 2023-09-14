@@ -98,7 +98,7 @@ export function deserializeResponse(buffer: ArrayBuffer) : Response {
   }
 
   return {
-    data: (new Uint8Array(buffer, 0, buffer.byteLength - statusBytesLength)).buffer,
+    data: buffer.slice(0, buffer.byteLength - statusBytesLength),
     sw: swBytes.getUint16(0),
     sw1: swBytes.getUint8(0),
     sw2: swBytes.getUint8(1),
