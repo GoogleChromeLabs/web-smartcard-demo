@@ -17,7 +17,6 @@
 import {
   SmartCardContext,
   SmartCardConnection,
-  SmartCardDisposition
 } from './smart-card'
 
 import * as apdu from './apdu'
