@@ -21,12 +21,14 @@ import {
 } from './smart-card'
 
 import * as apdu from './apdu'
+import * as piv from './piv'
 
 import {
   assert,
   numberByteSize,
   readBERLength,
-  serializeNumber
+  serializeNumber,
+  getBERValue
 } from './util'
 
 let refreshReadersButton: HTMLButtonElement;
@@ -34,24 +36,6 @@ let readersListElement: HTMLDivElement;
 let scardContext: SmartCardContext | undefined;
 
 const maxDataLength = 70000;
-
-// PIV Card Application AID (Application Identifier)
-// Note that this is just the NIST RID (Registered Application Provider
-// IDentifier)
-const pivAID = [0xa0, 0x00, 0x00, 0x03, 0x08];
-
-// NIST.SP.800-73-4, part 1
-// Table 4b. PIV Card Application Key References
-enum PIVKeyID {
-  CardAuthentication = 0x9E,
-}
-
-// NIST.SP.800-73-4, part 1
-// Table 3. Object Identifiers of the PIV Data Objects for Interoperable Use
-enum PIVObjectTag {
-  // X.509 Certificate for Card Authentication
-  CertificateForCardAuthentication = 0x5FC101,
-}
 
 async function refreshReadersList() {
   if (!scardContext) {
@@ -107,7 +91,7 @@ async function selectPIVApplication(scardConnection: SmartCardConnection) {
     ins: apdu.Instruction.Select,
     p1: apdu.SelectP1.SelectDFByName,
     p2: apdu.SelectP2.FirstOrOnlyOccurrence,
-    data: (new Uint8Array(pivAID)).buffer
+    data: (new Uint8Array(piv.AID)).buffer
   };
 
   let response:apdu.Response =
@@ -119,12 +103,6 @@ async function selectPIVApplication(scardConnection: SmartCardConnection) {
                 + response.sw.toString(16));
   }
 }
-
-const toHexString = (bytes: any) => {
-  return Array.from(bytes, (byte: number) => {
-    return ('0' + (byte & 0xff).toString(16)).slice(-2);
-  }).join('');
-};
 
 async function fetchObject(scardConnection: SmartCardConnection,
                            objectTag: number): Promise<ArrayBuffer> {
@@ -179,18 +157,12 @@ async function fetchObject(scardConnection: SmartCardConnection,
 
     const responseBytes = new Uint8Array(response.data);
 
-    console.log(`got ${responseBytes.byteLength} bytes`);
-    console.log(`responseBytes: ${toHexString(responseBytes)}`);
-
     bytes.set(responseBytes, dataLength);
     dataLength += responseBytes.byteLength;
 
     if (response.sw === apdu.SW.Success) {
-      console.log(`success`);
       break;
     }
-
-    console.log(`needs to read ${response.sw2} more bytes`);
 
     // There are more bytes to be read.
     command = {
@@ -217,12 +189,6 @@ async function fetchObject(scardConnection: SmartCardConnection,
   let berLength = readBERLength(bytes, i);
   i = berLength.valueOffset;
 
-  console.log(`berLength.valueOffset: ${berLength.valueOffset}`);
-  console.log(`berLength.length: ${berLength.length}`);
-  console.log(`dataLength: ${dataLength}`);
-
-  console.log(`bytes: ${toHexString(bytes.slice(0, dataLength))}`);
-
   if (berLength.valueOffset + berLength.length !== dataLength) {
     throw new Error("Invalid GET DATA response from PIV app: bad BER encoding");
   }
@@ -235,8 +201,10 @@ async function readCertificate(scardConnection: SmartCardConnection)
   : Promise<ArrayBuffer> {
   await selectPIVApplication(scardConnection);
 
-  return fetchObject(scardConnection,
-                     PIVObjectTag.CertificateForCardAuthentication);
+  const certObject = await fetchObject(
+    scardConnection, piv.ObjectTag.CertificateForCardAuthentication);
+
+  return getBERValue(certObject, piv.Tag.Certificate);
 }
 
 async function readAndDisplayCertificates(readerName: string, div: HTMLDivElement) {
@@ -262,7 +230,6 @@ async function readAndDisplayCertificates(readerName: string, div: HTMLDivElemen
       });
 
     connectionResult.connection.disconnect();
-
 
     // TODO: parse and display certData
 

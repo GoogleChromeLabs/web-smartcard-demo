@@ -18,6 +18,13 @@ export function assert(condition: unknown, msg?: string): asserts condition {
   if (condition === false) throw new Error(msg);
 }
 
+// For debugging
+export const toHexString = (bytes: any) => {
+  return Array.from(bytes, (byte: number) => {
+    return ('0' + (byte & 0xff).toString(16)).slice(-2);
+  }).join('');
+};
+
 export function numberByteSize(value: number): number {
   let byteSize = 0;
   while (value > 0) {
@@ -87,4 +94,25 @@ export function readBERLength(bytes: Uint8Array, bytesOffset:number): BERLength 
       valueOffset: i + numberByteSize
     };
   }
+}
+
+export function getBERValue(buffer: ArrayBuffer, tag: number) : ArrayBuffer {
+  let i = 0;
+  const bytes = new Uint8Array(buffer);
+
+  while(i < bytes.byteLength) {
+    const currentTag = bytes[i++];
+    const berLength = readBERLength(bytes, i);
+
+    if (currentTag !== tag) {
+      // Skip it.
+      i = berLength.valueOffset + berLength.length;
+      continue;
+    }
+
+    return buffer.slice(berLength.valueOffset,
+                        berLength.valueOffset + berLength.length);
+  }
+
+  throw Error(`Could not find tag 0x${tag.toString(16)}.`);
 }
