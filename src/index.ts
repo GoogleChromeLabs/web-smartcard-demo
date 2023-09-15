@@ -15,20 +15,14 @@
  */
 
 import {
-  SmartCardContext,
   SmartCardConnection,
+  SmartCardContext,
 } from './smart-card'
 
 import * as apdu from './apdu'
+import * as ber from './ber'
 import * as piv from './piv'
-
-import {
-  assert,
-  numberByteSize,
-  readBERLength,
-  serializeNumber,
-  getBERValue
-} from './util'
+import { assert } from './util'
 
 import * as x509 from "@peculiar/x509";
 
@@ -110,7 +104,7 @@ async function fetchObject(scardConnection: SmartCardConnection,
   // NIST.SP.800-73-4, part 1
   // 3.1.2 GET DATA Card Command
 
-  let objectTagByteSize:number = numberByteSize(objectTag);
+  let objectTagByteSize:number = ber.numberByteSize(objectTag);
 
   assert(objectTagByteSize > 0 && objectTagByteSize <= 3,
          `Invalid PIV objectTag byte size: ${objectTagByteSize}`);
@@ -120,7 +114,7 @@ async function fetchObject(scardConnection: SmartCardConnection,
 
   tagList[i++] = apdu.TagList;
   tagList[i++] = objectTagByteSize;
-  serializeNumber(tagList, i, objectTag);
+  ber.serializeNumber(tagList, i, objectTag);
 
   let command: apdu.CommandP = {
     // CLA: interindustry, no command chain, no secure messaging, logical channel 0
@@ -187,7 +181,7 @@ async function fetchObject(scardConnection: SmartCardConnection,
     throw new Error("Invalid GET DATA response from PIV app: not descretionary data");
   }
 
-  let berLength = readBERLength(bytes, i);
+  let berLength = ber.readLength(bytes, i);
   i = berLength.valueOffset;
 
   if (berLength.valueOffset + berLength.length !== dataLength) {
@@ -205,7 +199,7 @@ async function readCertificate(scardConnection: SmartCardConnection)
   const certObject = await fetchObject(
     scardConnection, piv.ObjectTag.CertificateForCardAuthentication);
 
-  return getBERValue(certObject, piv.Tag.Certificate);
+  return ber.getValue(certObject, piv.Tag.Certificate);
 }
 
 async function readAndDisplayCertificates(readerName: string, div: HTMLDivElement) {
