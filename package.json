@@ -35,5 +35,8 @@
   "scripts": {
     "start": "webpack serve --config webpack.dev.js",
     "build": "webpack --config webpack.wbn.js"
+  },
+  "dependencies": {
+    "@peculiar/x509": "^1.9.5"
   }
 }

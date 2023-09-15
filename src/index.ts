@@ -30,6 +30,8 @@ import {
   getBERValue
 } from './util'
 
+import * as x509 from "@peculiar/x509";
+
 let refreshReadersButton: HTMLButtonElement;
 let readersListElement: HTMLDivElement;
 let scardContext: SmartCardContext | undefined;
@@ -230,10 +232,12 @@ async function readAndDisplayCertificates(readerName: string, div: HTMLDivElemen
 
     connectionResult.connection.disconnect();
 
-    // TODO: parse and display certData
+    assert(certData.byteLength > 0, "Certificate data is empty!");
+
+    const cert = new x509.X509Certificate(certData);
 
     const p = document.createElement("p");
-    p.innerText = `Certificate has ${certData.byteLength} bytes!`;
+    p.innerText = `Certificate subject: ${cert.subject}`;
     div.appendChild(p);
 
   } catch(e) {
