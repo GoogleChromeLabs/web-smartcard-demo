@@ -17,6 +17,8 @@
 import {
   SmartCardConnection,
   SmartCardContext,
+  SmartCardReaderStateIn,
+  SmartCardReaderStateOut,
 } from './smart-card'
 
 import * as apdu from './apdu'
@@ -27,10 +29,218 @@ import { assert, toHexString } from './util'
 import * as x509 from "@peculiar/x509";
 
 let refreshReadersButton: HTMLButtonElement;
+let trackReadersButton: HTMLButtonElement;
 let readersListElement: HTMLDivElement;
 let scardContext: SmartCardContext | undefined;
+// Context used for tracking changes to readers.
+let scardTrackingContext: SmartCardContext | undefined = undefined;
 
-const maxDataLength = 70000;
+let readerTrackingAbortion: AbortController | undefined = undefined;
+
+let readerNameToDiv: Map<string, HTMLDivElement> = new Map();
+
+const MAX_DATA_LENGTH = 70000;
+
+const PNP_NOTIFICATION = String.raw`\\?PnP?\Notification`;
+const START_TRACKING_STRING = "Start tracking readers";
+const STOP_TRACKING_STRING = "Stop tracking readers";
+
+async function addNewReaders(readerStatesIn: Array<SmartCardReaderStateIn>) {
+  assert(scardTrackingContext !== undefined, "addNewReaders: No scardTrackingContext");
+
+  var newReaderStatesIn: Array<SmartCardReaderStateIn> = [];
+  const readers = await scardTrackingContext.listReaders();
+  readers.forEach((readerName) => {
+    if (!readerStatesIn.some((stateIn) => stateIn.readerName === readerName)) {
+      newReaderStatesIn.push({
+        readerName: readerName,
+        currentState: { unaware: true },
+      });
+    }
+  });
+
+  if (newReaderStatesIn.length === 0) {
+    return;
+  }
+
+  const newReadersStateOut =
+    await scardTrackingContext.getStatusChange(newReaderStatesIn);
+  newReadersStateOut.forEach((newReaderStateOut) => {
+    const eventState = newReaderStateOut.eventState;
+    if (eventState.ignore === true ||
+        eventState.unknown === true ||
+        eventState.unavailable === true) {
+      return;
+    }
+    readerStatesIn.push({
+      readerName: newReaderStateOut.readerName,
+      currentState: {
+        empty: eventState.empty ? eventState.empty : false,
+        present: eventState.present ? eventState.present : false,
+        exclusive: eventState.exclusive ? eventState.exclusive : false,
+        inuse: eventState.inuse ? eventState.inuse : false,
+        mute: eventState.mute ? eventState.mute : false,
+      },
+      currentCount: newReaderStateOut.eventCount,
+    });
+  });
+}
+
+async function startStopTrackingReaders() {
+  if (trackReadersButton.innerText === START_TRACKING_STRING) {
+    return startTrackingReaders();
+  } else {
+    return stopTrackingReaders();
+  }
+}
+
+async function stopTrackingReaders() {
+  if (readerTrackingAbortion !== undefined) {
+    readerTrackingAbortion.abort();
+  }
+}
+
+function removeStateInWithName(
+    readerStatesIn: Array<SmartCardReaderStateIn>,
+    readerName: string) {
+  const index = readerStatesIn.findIndex(
+    (stateIn) => stateIn.readerName === readerName);
+
+  if (index === -1) {
+    return;
+  }
+
+  readerStatesIn.splice(index, 1);
+}
+
+function addDivForReader(readerName: string) {
+  const div = document.createElement("div");
+  readersListElement.appendChild(div);
+
+  const p = document.createElement("p");
+
+  const span = document.createElement("span");
+  span.innerText = readerName;
+
+  const certCardAuthDiv = document.createElement("div");
+
+  const readCertificatesButton = document.createElement("button");
+  readCertificatesButton.innerText = "Read Certificate for Card Authentication";
+  readCertificatesButton.addEventListener('click',
+      ()=>{ readAndDisplayCertificates(readerName, certCardAuthDiv); });
+
+  p.appendChild(span);
+  p.appendChild(readCertificatesButton);
+  div.appendChild(p);
+  div.appendChild(certCardAuthDiv);
+  div.appendChild(document.createElement("hr"));
+
+  readerNameToDiv.set(readerName, div);
+}
+
+function updateReadersHTML(readerStatesIn: Array<SmartCardReaderStateIn>) {
+  // Add HTML for the new readers.
+  readerStatesIn.forEach((stateIn) => {
+    if (stateIn.readerName === PNP_NOTIFICATION) {
+      // This is not an actual reader device.
+      return;
+    }
+    if (readerNameToDiv.has(stateIn.readerName)) {
+      // We already have HTML for it.
+      return;
+    }
+    addDivForReader(stateIn.readerName);
+  });
+
+  // Remove HTML of readers that have been removed.
+  readerNameToDiv.forEach((div, readerName, map) => {
+    if (readerStatesIn.some((stateIn) => stateIn.readerName === readerName)) {
+      // This reader is available in the system. Keep its HTML.
+      return;
+    }
+
+    readersListElement.removeChild(div);
+    map.delete(readerName);
+  });
+}
+
+function updateReaderStatesIn(
+    readerStatesIn: Array<SmartCardReaderStateIn>,
+    readerStatesOut: Array<SmartCardReaderStateOut>) {
+
+  readerStatesOut.forEach((stateOut) => {
+    if (stateOut.eventState.unknown === true ||
+        stateOut.eventState.unavailable === true) {
+      removeStateInWithName(readerStatesIn, stateOut.readerName);
+      return;
+    }
+    const eventState = stateOut.eventState;
+
+    const stateIn = readerStatesIn.find(
+      (stateIn) => stateOut.readerName === stateIn.readerName);
+    assert(stateIn !== undefined, "updateReaderStatesIn: stateIn !== undefined");
+
+    stateIn.currentState = {
+      empty: eventState.empty ? eventState.empty : false,
+      present: eventState.present ? eventState.present : false,
+      exclusive: eventState.exclusive ? eventState.exclusive : false,
+      inuse: eventState.inuse ? eventState.inuse : false,
+      mute: eventState.mute ? eventState.mute : false,
+    };
+
+    stateIn.currentCount = stateOut.eventCount;
+  });
+}
+
+async function startTrackingReaders() {
+  try {
+    if (scardTrackingContext === undefined) {
+      scardTrackingContext = await navigator.smartCard.establishContext();
+    }
+
+    var readerStatesIn: Array<SmartCardReaderStateIn> = [];
+
+    // PC/SC hack to be notified about new readers being added to the system.
+    // Won't work on MacOS.
+    readerStatesIn.push({
+      readerName: PNP_NOTIFICATION,
+      currentState: {}
+    });
+
+    trackReadersButton.innerText = STOP_TRACKING_STRING;
+    refreshReadersButton.disabled = true;
+
+    while (true) {
+      await addNewReaders(readerStatesIn);
+
+      updateReadersHTML(readerStatesIn);
+
+      assert(readerTrackingAbortion === undefined,
+             "assertion failed: readerTrackingAbortion === undefined");
+      readerTrackingAbortion = new AbortController();
+
+      const readerStatesOut =
+        await scardTrackingContext.getStatusChange(
+          readerStatesIn,
+          {signal: readerTrackingAbortion!.signal});
+
+      readerTrackingAbortion = undefined;
+
+      updateReaderStatesIn(readerStatesIn, readerStatesOut);
+    }
+
+  } catch (e) {
+    // The AbortError DOMException is the expected result of a user's action
+    // (clicking on "stop tracking". So we don't report this particuar error.
+    if (!(e instanceof DOMException) || e.name !== "AbortError") {
+      readersListElement.innerText = "Failed start tracking: " + e.message;
+    }
+  }
+
+  trackReadersButton.innerText = START_TRACKING_STRING;
+  readerTrackingAbortion = undefined;
+  refreshReadersButton.disabled = false;
+}
 
 async function refreshReadersList() {
   if (!scardContext) {
@@ -53,32 +263,8 @@ async function refreshReadersList() {
     return;
   }
 
-  var needsDivider = false;
   readers.forEach((readerName) => {
-    if (needsDivider) {
-      readersListElement.appendChild(document.createElement("hr"));
-    }
-    const div = document.createElement("div");
-    readersListElement.appendChild(div);
-
-    const p = document.createElement("p");
-
-    const span = document.createElement("span");
-    span.innerText = readerName;
-
-    const certCardAuthDiv = document.createElement("div");
-
-    const readCertificatesButton = document.createElement("button");
-    readCertificatesButton.innerText = "Read Certificate for Card Authentication";
-    readCertificatesButton.addEventListener('click',
-        ()=>{ readAndDisplayCertificates(readerName, certCardAuthDiv); });
-
-    p.appendChild(span);
-    p.appendChild(readCertificatesButton);
-    div.appendChild(p);
-    div.appendChild(certCardAuthDiv);
-
-    needsDivider = true;
+    addDivForReader(readerName);
   });
 }
 
@@ -127,7 +313,7 @@ async function fetchObject(scardConnection: SmartCardConnection,
     data: tagList.buffer
   };
 
-  const bytes = new Uint8Array(maxDataLength);
+  const bytes = new Uint8Array(MAX_DATA_LENGTH);
   let dataLength = 0;
 
   // Get all data bytes.
@@ -149,8 +335,8 @@ async function fetchObject(scardConnection: SmartCardConnection,
       throw new Error("GET DATA response has no data");
     }
 
-    if (dataLength + response.data.byteLength > maxDataLength) {
-      throw new Error(`GET DATA is larger than ${maxDataLength} bytes`);
+    if (dataLength + response.data.byteLength > MAX_DATA_LENGTH) {
+      throw new Error(`GET DATA is larger than ${MAX_DATA_LENGTH} bytes`);
     }
 
     const responseBytes = new Uint8Array(response.data);
@@ -303,6 +489,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   refreshReadersButton = document.getElementById('refresh-readers') as HTMLButtonElement;
   refreshReadersButton.addEventListener('click', refreshReadersList);
+
+  trackReadersButton = document.getElementById("track-readers") as HTMLButtonElement;
+  trackReadersButton.addEventListener('click', startStopTrackingReaders);
 
   try {
     scardContext = await navigator.smartCard.establishContext();
