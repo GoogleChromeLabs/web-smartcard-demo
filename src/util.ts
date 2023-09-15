@@ -18,9 +18,16 @@ export function assert(condition: unknown, msg?: string): asserts condition {
   if (condition === false) throw new Error(msg);
 }
 
-// For debugging
-export const toHexString = (bytes: any) => {
+export function toHexString(bytes: any,
+                            bytesPerLine: number = 0,
+                            lineSeparator: string = "\n"): string {
+  let currByte = 0;
   return Array.from(bytes, (byte: number) => {
-    return ('0' + (byte & 0xff).toString(16)).slice(-2);
+    let hexStr = byte.toString(16).padStart(2, '0');
+    if (bytesPerLine > 0 && (currByte % bytesPerLine === 0) && (currByte > 0)) {
+      hexStr = lineSeparator + hexStr;
+    }
+    currByte++;
+    return hexStr;
   }).join('');
 };
