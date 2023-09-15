@@ -22,7 +22,7 @@ import {
 import * as apdu from './apdu'
 import * as ber from './ber'
 import * as piv from './piv'
-import { assert } from './util'
+import { assert, toHexString } from './util'
 
 import * as x509 from "@peculiar/x509";
 
@@ -66,14 +66,17 @@ async function refreshReadersList() {
     const span = document.createElement("span");
     span.innerText = readerName;
 
+    const certCardAuthDiv = document.createElement("div");
+
     const readCertificatesButton = document.createElement("button");
-    readCertificatesButton.innerText = "Read certificates";
+    readCertificatesButton.innerText = "Read Certificate for Card Authentication";
     readCertificatesButton.addEventListener('click',
-        ()=>{ readAndDisplayCertificates(readerName, div); });
+        ()=>{ readAndDisplayCertificates(readerName, certCardAuthDiv); });
 
     p.appendChild(span);
     p.appendChild(readCertificatesButton);
     div.appendChild(p);
+    div.appendChild(certCardAuthDiv);
 
     needsDivider = true;
   });
@@ -202,10 +205,66 @@ async function readCertificate(scardConnection: SmartCardConnection)
   return ber.getValue(certObject, piv.Tag.Certificate);
 }
 
+function addValueOnlyRow(table: HTMLTableElement, value: string) {
+    let tr = document.createElement("tr");
+    table.appendChild(tr);
+    let tdValue = document.createElement("td");
+    tr.appendChild(tdValue);
+
+    tdValue.colSpan = 2;
+    tdValue.innerText = value;
+}
+
+function addRow(table: HTMLTableElement, field: string, value: string) {
+    let tr = document.createElement("tr");
+    table.appendChild(tr);
+    let tdField = document.createElement("td");
+    tr.appendChild(tdField);
+    let tdValue = document.createElement("td");
+    tr.appendChild(tdValue);
+
+    tdField.innerText = field;
+    tdValue.innerText = value;
+}
+
+function displayCertificate(cert: x509.X509Certificate,
+                            title: string,
+                            div: HTMLDivElement) {
+    const table = document.createElement("table");
+
+    {
+      let tr = document.createElement("tr");
+      table.appendChild(tr);
+      let th = document.createElement("th");
+      tr.appendChild(th);
+
+      th.colSpan = 2;
+      th.innerText = title;
+    }
+
+    const signatureStr =
+      toHexString(new Uint8Array(cert.signature), 20);
+
+    addRow(table, "Serial Number:", cert.serialNumber);
+    addRow(table, "Subject:", cert.subject);
+    addRow(table, "Issuer:", cert.issuer);
+    addRow(table, "Not before:", cert.notBefore.toDateString());
+    addRow(table, "Not after:", cert.notAfter.toDateString());
+    addRow(table, "Signature algorithm:", cert.signatureAlgorithm.name);
+    addRow(table, "Signature:", signatureStr);
+    addRow(table, "Public key algorithm:", cert.publicKey.algorithm.name);
+    addValueOnlyRow(table, cert.publicKey.toString());
+
+    div.appendChild(table);
+}
+
 async function readAndDisplayCertificates(readerName: string, div: HTMLDivElement) {
   if (scardContext === undefined) {
     return;
   }
+
+  // Clear any preexisting content.
+  div.textContent = "";
 
   try {
     const connectionResult = await scardContext.connect(
@@ -228,12 +287,9 @@ async function readAndDisplayCertificates(readerName: string, div: HTMLDivElemen
 
     assert(certData.byteLength > 0, "Certificate data is empty!");
 
-    const cert = new x509.X509Certificate(certData);
-
-    const p = document.createElement("p");
-    p.innerText = `Certificate subject: ${cert.subject}`;
-    div.appendChild(p);
-
+    displayCertificate(new x509.X509Certificate(certData),
+                       "X.509 Certificate for Card Authentication",
+                       div);
   } catch(e) {
     const p = document.createElement("p");
     p.innerText = "Failed to read certificates: " + e;
