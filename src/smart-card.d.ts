@@ -14,9 +14,58 @@
  * limitations under the License.
  */
 
+// https://wicg.github.io/web-smart-card/#dom-smartcardreaderstateflagsin
+export interface SmartCardReaderStateFlagsIn {
+  unaware?: boolean;
+  ignore?: boolean;
+  unavailable?: boolean;
+  empty?: boolean;
+  present?: boolean;
+  exclusive?: boolean;
+  inuse?: boolean;
+  mute?: boolean;
+}
+
+// https://wicg.github.io/web-smart-card/#dom-smartcardreaderstatein
+export interface SmartCardReaderStateIn {
+  readerName: string;
+  currentState: SmartCardReaderStateFlagsIn;
+  currentCount?: number;
+}
+
+// https://wicg.github.io/web-smart-card/#dom-smartcardreaderstateout
+export interface SmartCardReaderStateOut {
+  readerName: string;
+  eventState: SmartCardReaderStateFlagsOut;
+  eventCount: number;
+  answerToReset?: ArrayBuffer;
+}
+
+// https://wicg.github.io/web-smart-card/#dom-smartcardreaderstateflagsout
+export interface SmartCardReaderStateFlagsOut {
+  ignore?: boolean;
+  changed?: boolean;
+  unavailable?: boolean;
+  unknown?: boolean;
+  empty?: boolean;
+  present?: boolean;
+  exclusive?: boolean;
+  inuse?: boolean;
+  mute?: boolean;
+}
+
+// https://wicg.github.io/web-smart-card/#dom-smartcardgetstatuschangeoptions
+export interface SmartCardGetStatusChangeOptions {
+  timeout?: DOMHighResTimeStamp;
+  signal?: AbortSignal;
+}
+
 // https://wicg.github.io/web-smart-card/#smartcardcontext-interface
 export interface SmartCardContext {
   listReaders(): Promise<Array<string>>;
+   getStatusChange(
+      readerStates: Array<SmartCardReaderStateIn>,
+      options?: SmartCardGetStatusChangeOptions): Promise<Array<SmartCardReaderStateOut>>;
   connect(readerName: string,
           accessMode: SmartCardAccessMode,
           options?: SmartCardConnectOptions): Promise<SmartCardConnectResult>;
