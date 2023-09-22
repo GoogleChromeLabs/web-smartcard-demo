@@ -388,6 +388,11 @@ async function readCertificate(scardConnection: SmartCardConnection)
   const certObject = await fetchObject(
     scardConnection, piv.ObjectTag.CertificateForCardAuthentication);
 
+  if (certObject.byteLength === 0) {
+    throw new Error(
+      "Card does not have a X.509 Certificate for Card Authentication.");
+  }
+
   return ber.getValue(certObject, piv.Tag.Certificate);
 }
 
@@ -483,6 +488,12 @@ async function readAndDisplayCertificates(readerName: string, div: HTMLDivElemen
   }
 }
 
+function showFatalError(message: string) {
+  readersListElement.innerText = message;
+  refreshReadersButton.disabled = true;
+  trackReadersButton.disabled = true;
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
 
   readersListElement = document.getElementById('readers-list') as HTMLDivElement;
@@ -493,11 +504,15 @@ document.addEventListener('DOMContentLoaded', async () => {
   trackReadersButton = document.getElementById("track-readers") as HTMLButtonElement;
   trackReadersButton.addEventListener('click', startStopTrackingReaders);
 
+  if (navigator.smartCard === undefined) {
+    showFatalError("Smart Card API is not available!");
+    return;
+  }
+
   try {
     scardContext = await navigator.smartCard.establishContext();
   } catch (e) {
-    readersListElement.innerText = "Failed to establish context: " + e.message;
+    showFatalError("Failed to establish context: " + e.message);
     scardContext = undefined;
-    refreshReadersButton.disabled = true;
   }
 });
