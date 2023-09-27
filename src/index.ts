@@ -127,7 +127,7 @@ function addDivForReader(readerName: string) {
   const readCertificatesButton = document.createElement("button");
   readCertificatesButton.innerText = "Read Certificate for Card Authentication";
   readCertificatesButton.addEventListener('click',
-      ()=>{ readAndDisplayCertificates(readerName, certCardAuthDiv); });
+      ()=>{ readAndDisplayCertificate(readerName, certCardAuthDiv); });
 
   p.appendChild(span);
   p.appendChild(readCertificatesButton);
@@ -449,7 +449,7 @@ function displayCertificate(cert: x509.X509Certificate,
     div.appendChild(table);
 }
 
-async function readAndDisplayCertificates(readerName: string, div: HTMLDivElement) {
+async function readAndDisplayCertificate(readerName: string, div: HTMLDivElement) {
   if (scardContext === undefined) {
     return;
   }
@@ -483,7 +483,7 @@ async function readAndDisplayCertificates(readerName: string, div: HTMLDivElemen
                        div);
   } catch(e) {
     const p = document.createElement("p");
-    p.innerText = "Failed to read certificates: " + e;
+    p.innerText = "Failed to read certificate: " + e;
     div.appendChild(p);
   }
 }
