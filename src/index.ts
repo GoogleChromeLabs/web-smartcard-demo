@@ -457,6 +457,12 @@ async function readAndDisplayCertificate(readerName: string, div: HTMLDivElement
   // Clear any preexisting content.
   div.textContent = "";
 
+  let displayError = (e: any) => {
+    const p = document.createElement("p");
+    p.innerText = "Failed to read certificate: " + e;
+    div.appendChild(p);
+  };
+
   try {
     const connectionResult = await scardContext.connect(
       readerName, "shared", {preferredProtocols: ["t1"]});
@@ -470,21 +476,26 @@ async function readAndDisplayCertificate(readerName: string, div: HTMLDivElement
 
     await connectionResult.connection.startTransaction(
       async function () {
-        certData = await readCertificate(connectionResult.connection);
-        return "reset";
+        try {
+          certData = await readCertificate(connectionResult.connection);
+        } catch (e) {
+          displayError(e);
+        } finally {
+          return "reset";
+        }
       });
 
     connectionResult.connection.disconnect();
 
-    assert(certData.byteLength > 0, "Certificate data is empty!");
+    if (certData.byteLength === 0) {
+      return;
+    }
 
     displayCertificate(new x509.X509Certificate(certData),
                        "X.509 Certificate for Card Authentication",
                        div);
   } catch(e) {
-    const p = document.createElement("p");
-    p.innerText = "Failed to read certificate: " + e;
-    div.appendChild(p);
+    displayError(e);
   }
 }
 
