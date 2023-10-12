@@ -11,9 +11,10 @@ It serves as a demonstration of the [Web Smart Card API].
 
 * A ChromeOS device. At the moment this Web API is implemented on this platform.
   Implementations for Windows, MacOS and Linux are expected to happen in 2024.
-* The [Smart Card Connector] extension must be installed. Since ChromeOS, unlike
-  other desktop OSs, does not have a native service for [PC/SC] access, this
-  extension must be installed to provide such service.
+* The [Smart Card Connector] extension must be installed (version 1.4.0 or later,
+  [web store link](https://chromewebstore.google.com/detail/smart-card-connector/khpfeaanjngmcnplbdlpegiifgpfgdco)).
+  Since ChromeOS, unlike other desktop OSs, does not have a native service for
+  [PC/SC] access, this extension must be installed to provide such service.
 * A separate machine for serving the demo app to the ChromeOS device. Steps for
   installing the demo app from a signed Web Bundle will come later.
 * A smart card reader and a smart card which implements the PIV interface ([NIST SP 800-73-4])
