@@ -3,7 +3,7 @@
 This repository contains an
 [Isolated Web App](https://github.com/WICG/isolated-web-apps/blob/main/README.md)
 that reads and displays the X.509 Certificate for Card Authentication present in
-the smart card.
+a [Personal Identity Verification] (PIV) smart card.
 
 It serves as a demonstration of the [Web Smart Card API].
 
@@ -73,4 +73,5 @@ every new log in.
 [PC/SC]: https://en.wikipedia.org/wiki/PC/SC
 [Smart Card Connector]: https://github.com/GoogleChromeLabs/chromeos_smart_card_connector
 [NIST SP 800-73-4]: https://csrc.nist.gov/pubs/sp/800/73/4/upd1/final
+[Personal Identity Verification]: https://en.wikipedia.org/wiki/FIPS_201 
 [YubiKey Manager]: https://developers.yubico.com/yubikey-manager-qt/
