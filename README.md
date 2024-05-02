@@ -10,7 +10,7 @@ It serves as a demonstration of the [Web Smart Card API].
 ## Prerequisites
 
 * A ChromeOS device. At the moment this Web API is implemented on this platform.
-  Implementations for Windows, MacOS and Linux are expected to happen in 2024.
+  There's no implementation of the Web Smart Card API yet for Windows, MacOS or Linux.
 * The [Smart Card Connector] extension must be installed (version 1.4.0 or later,
   [web store link](https://chromewebstore.google.com/detail/smart-card-connector/khpfeaanjngmcnplbdlpegiifgpfgdco)).
   Since ChromeOS, unlike other desktop OSs, does not have a native service for
