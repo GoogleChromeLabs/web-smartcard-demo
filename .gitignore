@@ -1,4 +1,5 @@
 dist/
+.env
 node_modules/
 private.pem
 package-lock.json
