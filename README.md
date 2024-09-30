@@ -69,9 +69,31 @@ launcher as a newly installed app. Now you can remove that URL from
 `#install-isolated-web-app-from-url`, otherwise it will install a new app on
 every new log in.
 
+### Building a Signed Web Bundle using a key stored in GCP KSM
+
+To build signed web bundle from this and sign it with a signing key within
+your Google Cloud project using [wbn-sign-gcp-kms], create `.env` file in the
+repository root with the following contents (replace `...` with actual values):
+```sh
+GCP_PROJECT='...'
+GCP_KEY_RING='...'
+GCP_KEY='...'
+GCP_LOCATION='...' 
+GCP_KEY_VERSION='...'
+```
+and run
+```sh
+npm run build-gcp-kms
+```
+if You are correctly authenticated for the purpose of [GCP KMS Node.js client],
+the ready bundle will appear in `dist/smart_card_demo.swbn`.
+
 [Web Smart Card API]: https://wicg.github.io/web-smart-card/
 [PC/SC]: https://en.wikipedia.org/wiki/PC/SC
 [Smart Card Connector]: https://github.com/GoogleChromeLabs/chromeos_smart_card_connector
 [NIST SP 800-73-4]: https://csrc.nist.gov/pubs/sp/800/73/4/upd1/final
 [Personal Identity Verification]: https://en.wikipedia.org/wiki/FIPS_201 
 [YubiKey Manager]: https://developers.yubico.com/yubikey-manager-qt/
+[wbn-sign-gcp-kms]: https://github.com/chromeos/wbn-sign-gcp-kms
+[GCP KMS Node.js client]: https://cloud.google.com/nodejs/docs/reference/kms/latest
+
