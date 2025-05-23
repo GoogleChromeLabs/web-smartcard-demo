@@ -26,11 +26,7 @@ It serves as a demonstration of the [Web Smart Card API].
 ### Chrome flags in the target ChromeOS device
 
 The following flags in `chrome://flags` must be enabled:
-* `#enable-isolated-web-apps`
 * `#enable-isolated-web-app-dev-mode`
-* `#install-isolated-web-app-from-url`: Here you enter the URL to the web server
-  running in your development machine, eg: `http://192.168.1.4:8080`. More on
-  that later.
 * `#enable-smart-card-web-api`
 
 ## Building
@@ -62,12 +58,10 @@ To start a local development server run,
 npm run start
 ```
 
-Then log into your ChromeOS device. It will automatically install the Isolated
-Web App served by the URL set in `#install-isolated-web-app-from-url`. After a
-couple of seconds you should see the "Smart Card Demo" app available in the
-launcher as a newly installed app. Now you can remove that URL from
-`#install-isolated-web-app-from-url`, otherwise it will install a new app on
-every new log in.
+Then log into your ChromeOS device, go to `chrome://web-app-internals/`, put
+the server url in the text box labeled `Install IWA via Dev Mode Proxy:` and
+press the `Install` button. After a couple of seconds you should see the "Smart
+Card Demo" app available in the launcher as a newly installed app.
 
 ### Building a Signed Web Bundle using a key stored in GCP KSM
 
