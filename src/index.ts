@@ -35,12 +35,22 @@ let scardContext: SmartCardContext | undefined;
 // Context used for tracking changes to readers.
 let scardTrackingContext: SmartCardContext | undefined = undefined;
 
+interface ReaderUiElements {
+  readerDiv: HTMLDivElement;
+  connectButton: HTMLButtonElement;
+  disconnectButton: HTMLButtonElement;
+  readCertButton: HTMLButtonElement;
+  certDiv: HTMLDivElement;
+}
+
 let readerTrackingAbortion: AbortController | undefined = undefined;
 
-let readerNameToDiv: Map<string, HTMLDivElement> = new Map();
+let readerNameToElements: Map<string, ReaderUiElements> = new Map();
+let readerConnections: Map<string, SmartCardConnection> = new Map();
 
 const MAX_DATA_LENGTH = 70000;
 
+// PC/SC specific constant for plug and play notifications.
 const PNP_NOTIFICATION = String.raw`\\?PnP?\Notification`;
 const START_TRACKING_STRING = "Start tracking readers";
 const STOP_TRACKING_STRING = "Stop tracking readers";
@@ -113,55 +123,164 @@ function removeStateInWithName(
   readerStatesIn.splice(index, 1);
 }
 
+function updateReaderUIState(readerName: string) {
+  const elements = readerNameToElements.get(readerName);
+  if (!elements) return;
+
+  const isConnected = readerConnections.has(readerName);
+
+  elements.connectButton.disabled = isConnected;
+  elements.disconnectButton.disabled = !isConnected;
+  elements.readCertButton.disabled = !isConnected;
+}
+
+async function cleanupReaderConnectionAndUI(readerName: string, errorMessage?: string) {
+  const elements = readerNameToElements.get(readerName);
+  if (elements && errorMessage) {
+    elements.certDiv.textContent = ""; // Clear previous content
+    const p = document.createElement("p");
+    p.style.color = "red";
+    p.innerText = "Error: " + errorMessage;
+    elements.certDiv.appendChild(p);
+  }
+
+  const connection = readerConnections.get(readerName);
+  if (connection) {
+    try {
+      await connection.disconnect();
+    } catch (e) {
+      // If elements are still there, display this secondary error too, or log it.
+      if (elements && elements.certDiv && !errorMessage) { // Avoid overwriting primary error
+        const p = document.createElement("p");
+        p.style.color = "orange";
+        p.innerText = `Note: Disconnect also failed: ${e.message || e}`;
+        elements.certDiv.appendChild(p);
+      }
+    }
+    readerConnections.delete(readerName);
+  }
+  updateReaderUIState(readerName);
+}
+
+async function handleConnect(readerName: string) {
+  if (!scardContext || readerConnections.has(readerName)) {
+    return;
+  }
+  const elements = readerNameToElements.get(readerName);
+  if (elements) {
+    elements.certDiv.textContent = ""; // Clear previous messages/certs
+  }
+
+  try {
+    const connectionResult = await scardContext.connect(
+      readerName, "shared", { preferredProtocols: ["t1"] });
+
+    if (connectionResult.activeProtocol !== "t1") {
+      throw new DOMException("Unexpected active protocol: " +
+                             connectionResult.activeProtocol);
+    }
+    readerConnections.set(readerName, connectionResult.connection);
+    if (elements) {
+        const p = document.createElement("p");
+        p.style.color = "green";
+        p.innerText = `Connected with protocol: ${connectionResult.activeProtocol}`;
+        elements.certDiv.appendChild(p);
+    }
+  } catch (e: any) {
+    cleanupReaderConnectionAndUI(readerName, `Connection failed: ${e.message || e}`);
+  }
+  updateReaderUIState(readerName);
+}
+
+async function handleDisconnect(readerName: string) {
+  const elements = readerNameToElements.get(readerName);
+  if (elements) {
+    elements.certDiv.textContent = ""; // Clear previous messages/certs
+  }
+  await cleanupReaderConnectionAndUI(readerName);
+  if (elements) {
+    const p = document.createElement("p");
+    p.innerText = "Disconnected.";
+    elements.certDiv.appendChild(p);
+  }
+}
+
 function addDivForReader(readerName: string) {
-  const div = document.createElement("div");
-  readersListElement.appendChild(div);
+  const readerDiv = document.createElement("div");
 
   const p = document.createElement("p");
-
   const span = document.createElement("span");
   span.innerText = readerName;
-
   const certCardAuthDiv = document.createElement("div");
+
+  const connectButton = document.createElement("button");
+  connectButton.innerText = "Connect";
+  connectButton.addEventListener('click', () => handleConnect(readerName));
+
+  const disconnectButton = document.createElement("button");
+  disconnectButton.innerText = "Disconnect";
+  disconnectButton.addEventListener('click', () => handleDisconnect(readerName));
 
   const readCertificatesButton = document.createElement("button");
   readCertificatesButton.innerText = "Read Certificate for Card Authentication";
-  readCertificatesButton.addEventListener('click',
-      ()=>{ readAndDisplayCertificate(readerName, certCardAuthDiv); });
+  readCertificatesButton.addEventListener('click', () => handleReadCertificateCommand(readerName));
 
   p.appendChild(span);
+  p.appendChild(connectButton);
+  p.appendChild(disconnectButton);
   p.appendChild(readCertificatesButton);
-  div.appendChild(p);
-  div.appendChild(certCardAuthDiv);
-  div.appendChild(document.createElement("hr"));
+  readerDiv.appendChild(p);
+  readerDiv.appendChild(certCardAuthDiv);
+  readerDiv.appendChild(document.createElement("hr"));
 
-  readerNameToDiv.set(readerName, div);
+  readersListElement.appendChild(readerDiv);
+  readerNameToElements.set(readerName, {
+    readerDiv: readerDiv,
+    connectButton: connectButton,
+    disconnectButton: disconnectButton,
+    readCertButton: readCertificatesButton,
+    certDiv: certCardAuthDiv,
+  });
+  updateReaderUIState(readerName); // Set initial button states
 }
 
 function updateReadersHTML(readerStatesIn: Array<SmartCardReaderStateIn>) {
-  // Add HTML for the new readers.
+  const currentSystemReaderNames = new Set(
+    readerStatesIn
+      .map(state => state.readerName)
+      .filter(name => name !== PNP_NOTIFICATION)
+  );
+
+  // Remove HTML & cleanup connections of readers that have been removed from the system
+  for (const readerName of Array.from(readerNameToElements.keys())) {
+    if (!currentSystemReaderNames.has(readerName)) {
+      const elements = readerNameToElements.get(readerName)!;
+      if (elements.readerDiv.parentNode) {
+        readersListElement.removeChild(elements.readerDiv);
+      }
+      cleanupReaderConnectionAndUI(readerName, "Reader removed from system.");
+      readerNameToElements.delete(readerName);
+    }
+  }
+
+  // Add HTML for new readers
   readerStatesIn.forEach((stateIn) => {
-    if (stateIn.readerName === PNP_NOTIFICATION) {
-      // This is not an actual reader device.
-      return;
-    }
-    if (readerNameToDiv.has(stateIn.readerName)) {
-      // We already have HTML for it.
-      return;
-    }
+    if (stateIn.readerName === PNP_NOTIFICATION) return;
+    if (readerNameToElements.has(stateIn.readerName)) return; // Already have HTML
     addDivForReader(stateIn.readerName);
   });
 
-  // Remove HTML of readers that have been removed.
-  readerNameToDiv.forEach((div, readerName, map) => {
-    if (readerStatesIn.some((stateIn) => stateIn.readerName === readerName)) {
-      // This reader is available in the system. Keep its HTML.
-      return;
-    }
-
-    readersListElement.removeChild(div);
-    map.delete(readerName);
-  });
+  // Handle the "No readers" message
+  if (readerNameToElements.size === 0 && !readerStatesIn.some(s => s.readerName !== PNP_NOTIFICATION)) {
+    readersListElement.innerText = "No smart card readers available.";
+  } else if (readersListElement.innerText !== "" && readerNameToElements.size > 0) {
+    readersListElement.innerText = ""; // Clear message if readers are now present
+    readerNameToElements.forEach(elements => { // Ensure divs are parented
+        if (!elements.readerDiv.parentNode) {
+            readersListElement.appendChild(elements.readerDiv);
+        }
+     });
+  }
 }
 
 function updateReaderStatesIn(
@@ -243,31 +362,62 @@ async function startTrackingReaders() {
 }
 
 async function refreshReadersList() {
-  if (!scardContext) {
-    return;
-  }
+  if (!scardContext) return;
 
-  var readers = undefined;
+  let fetchedReaderNames: string[];
   try {
-    readers = await scardContext.listReaders();
-  } catch (e) {
+    fetchedReaderNames = await scardContext.listReaders();
+  } catch (e: any) {
+    // Clear existing reader display before showing error
+    readersListElement.textContent = ""; // This removes all child nodes
+    // Cleanup connections for all previously known readers
+    readerNameToElements.forEach(async (elements, name) => {
+        await cleanupReaderConnectionAndUI(name);
+    });
+    readerNameToElements.clear();
     readersListElement.innerText = "Failed to list readers: " + e.message;
     return;
   }
 
-  // Clear the list
-  readersListElement.textContent = "";
-
-  if (readers.length === 0) {
-    readersListElement.innerText = "No smart card readers available.";
-    return;
+  // If "No smart card readers available." was the text, clear it to allow adding children.
+  if (readersListElement.innerText !== "" && fetchedReaderNames.length > 0) {
+      readersListElement.innerText = "";
   }
 
-  readers.forEach((readerName) => {
-    addDivForReader(readerName);
-  });
+  const knownReaderNames = new Set(readerNameToElements.keys());
+  const currentReaderNamesSet = new Set(fetchedReaderNames);
+
+  // Remove readers that are gone
+  for (const name of Array.from(knownReaderNames)) { // Iterate over a copy
+    if (!currentReaderNamesSet.has(name)) {
+      const elements = readerNameToElements.get(name);
+      if (elements && elements.readerDiv.parentNode) {
+        readersListElement.removeChild(elements.readerDiv);
+      }
+      await cleanupReaderConnectionAndUI(name, "Reader no longer listed.");
+      readerNameToElements.delete(name);
+    }
+  }
+
+  // Add new readers / ensure existing ones are in DOM
+  for (const name of fetchedReaderNames) {
+    if (!readerNameToElements.has(name)) {
+      addDivForReader(name);
+    } else {
+        // Ensure it's in the DOM if it was somehow removed (e.g. by innerText)
+        const elements = readerNameToElements.get(name)!;
+        if (!elements.readerDiv.parentNode) {
+            readersListElement.appendChild(elements.readerDiv);
+        }
+    }
+  }
+
+  if (readerNameToElements.size === 0 && fetchedReaderNames.length === 0) {
+    readersListElement.innerText = "No smart card readers available.";
+  }
 }
 
+// Selects the PIV application on the card.
 async function selectPIVApplication(scardConnection: SmartCardConnection) {
   const selectPIVApp = {
     // interindustry, no command chain, no secure messaging, logical channel 0
@@ -288,6 +438,7 @@ async function selectPIVApplication(scardConnection: SmartCardConnection) {
   }
 }
 
+// Fetches a PIV data object from the card.
 async function fetchObject(scardConnection: SmartCardConnection,
                            objectTag: number): Promise<ArrayBuffer> {
   // NIST.SP.800-73-4, part 1
@@ -381,7 +532,8 @@ async function fetchObject(scardConnection: SmartCardConnection,
                      berLength.valueOffset + berLength.length).buffer;
 }
 
-async function readCertificate(scardConnection: SmartCardConnection)
+// Reads the X.509 Certificate for Card Authentication from the PIV application.
+async function _internalReadCertificateData(scardConnection: SmartCardConnection)
   : Promise<ArrayBuffer> {
   await selectPIVApplication(scardConnection);
 
@@ -449,53 +601,63 @@ function displayCertificate(cert: x509.X509Certificate,
     div.appendChild(table);
 }
 
-async function readAndDisplayCertificate(readerName: string, div: HTMLDivElement) {
-  if (scardContext === undefined) {
+async function handleReadCertificateCommand(readerName: string) {
+  const connection = readerConnections.get(readerName);
+  const elements = readerNameToElements.get(readerName);
+
+  if (!connection || !elements) {
+    console.error("Attempted to read certificate without a connection or elements for", readerName);
+    // This state should ideally be prevented by button disablement.
+    // If it occurs, ensure UI is consistent.
+    if (elements) updateReaderUIState(readerName);
     return;
   }
 
-  // Clear any preexisting content.
-  div.textContent = "";
-
-  let displayError = (e: any) => {
-    const p = document.createElement("p");
-    p.innerText = "Failed to read certificate: " + e;
-    div.appendChild(p);
-  };
+  elements.certDiv.textContent = ""; // Clear previous content
 
   try {
-    const connectionResult = await scardContext.connect(
-      readerName, "shared", {preferredProtocols: ["t1"]});
+    // Using an object to hold the result for better type inference after async callback.
+    const resultHolder = { value: undefined as ArrayBuffer | undefined };
 
-    if (connectionResult.activeProtocol !== "t1") {
-      throw new DOMException("Unexpected active protocol: " +
-                             connectionResult.activeProtocol);
-    }
-
-    let certData: ArrayBuffer = new ArrayBuffer(0);
-
-    await connectionResult.connection.startTransaction(
-      async function () {
+    await connection.startTransaction(
+      async () => {
         try {
-          certData = await readCertificate(connectionResult.connection);
-        } catch (e) {
-          displayError(e);
-        } finally {
-          return "reset";
+          resultHolder.value = await _internalReadCertificateData(connection);
+          return "reset"; // Reset card after successful read
+        } catch (transactionError) {
+          // This error occurs *inside* the transaction; re-throw to be caught by the outer catch.
+          throw transactionError;
         }
       });
 
-    connectionResult.connection.disconnect();
-
-    if (certData.byteLength === 0) {
-      return;
+    // resultHolder.value is ArrayBuffer | undefined after transaction.
+    // Use instanceof for a strong type guard.
+    if (resultHolder.value instanceof ArrayBuffer) {
+      if (resultHolder.value.byteLength > 0) {
+        displayCertificate(new x509.X509Certificate(resultHolder.value),
+                           "X.509 Certificate for Card Authentication",
+                           elements.certDiv);
+      } else {
+        // resultHolder.value is an ArrayBuffer, but it's empty.
+        // This means _internalReadCertificateData found the certificate object tag,
+        // but the actual certificate data within it was empty.
+        if (!elements.certDiv.textContent) { // Avoid overwriting other errors.
+          const p = document.createElement("p");
+          p.innerText = "Certificate is present but empty.";
+          elements.certDiv.appendChild(p);
+        }
+      }
     }
-
-    displayCertificate(new x509.X509Certificate(certData),
-                       "X.509 Certificate for Card Authentication",
-                       div);
-  } catch(e) {
-    displayError(e);
+    // If resultHolder.value was not an ArrayBuffer (e.g. undefined), it implies an issue
+    // with the transaction or _internalReadCertificateData not adhering to its Promise<ArrayBuffer> contract,
+    // or the transaction completed without error but without setting the value.
+    // Such a state should ideally be caught by type errors or indicate a deeper problem.
+    // The primary error handling is via the catch block.
+  } catch (e: any) {
+    // Catches errors from startTransaction itself, or re-thrown from transaction callback.
+    // Per instructions: "When an error happens during ... reading the certificate,
+    // assume the connection is dead and drop the object."
+    await cleanupReaderConnectionAndUI(readerName, `Failed to read certificate: ${e.message || e}`);
   }
 }
 
@@ -506,7 +668,6 @@ function showFatalError(message: string) {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
-
   readersListElement = document.getElementById('readers-list') as HTMLDivElement;
 
   refreshReadersButton = document.getElementById('refresh-readers') as HTMLButtonElement;
