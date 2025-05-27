@@ -21,15 +21,9 @@ const { parsePemKey, NodeCryptoSigningStrategy } = require("wbn-sign");
 
 require("dotenv").config();
 
+const privateKeyText = process.env.PRIVATE_KEY;
 const privateKeyPath = process.env.PRIVATE_KEY_PATH;
 const privateKeyPassword = process.env.PRIVATE_KEY_PASSWORD;
-
-if (!privateKeyPath) {
-  throw new Error(
-    "Provide the private key path in the PRIVATE_KEY_PATH " +
-      "environment variable.",
-  );
-}
 
 if (!privateKeyPassword) {
   console.warn(
@@ -38,10 +32,25 @@ if (!privateKeyPassword) {
   );
 }
 
-const privateKey = parsePemKey(
-  require("fs").readFileSync(privateKeyPath, "utf-8"),
-  privateKeyPassword,
-);
+var privateKey = undefined;
+
+if (!privateKeyText === !privateKeyPath) {
+  throw new Error(
+    "Exactly one out of PRIVATE_KEY and PRIVATE_KEY_PATH is required!",
+  );
+}
+
+if (privateKeyPath) {
+  privateKey = parsePemKey(
+    require("fs").readFileSync(privateKeyPath, "utf-8"),
+    privateKeyPassword,
+  );
+} else if (privateKeyText) {
+  privateKey = parsePemKey(
+    Buffer.from(privateKeyText, "utf-8"),
+    privateKeyPassword,
+  );
+}
 
 module.exports = merge(common, {
   mode: "production",

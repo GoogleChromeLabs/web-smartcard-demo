@@ -1,0 +1,144 @@
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to use"
+        type: environment
+        required: true
+
+jobs:
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract version from package.json
+        id: package_version
+        run: |
+          VERSION=$(jq -r .version package.json)
+          PREVIOUS_VERSION=$(gh release list --repo '${{ github.repository }}' --json tagName --jq '.[0].tagName')
+
+          if [ $PREVIOUS_VERSION = $VERSION ]; then
+            echo "A release of this version already exists."
+            exit 1
+          else
+            echo "${PREVIOUS_VERSION:+Last release was }${PREVIOUS_VERSION:-No prior release}, building now $VERSION."
+          fi
+
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "previous_version=$PREVIOUS_VERSION" >> $GITHUB_OUTPUT
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build the signed web bundle
+        run: npm run build
+        env:
+          PRIVATE_KEY: ${{ secrets.SIGNING_KEY }}
+
+      - name: Prepare SWBN asset
+        id: swbn_asset_prep
+        run: |
+          set -e
+          ORIGINAL_SWBN_PATH="./dist/smart_card_demo.swbn" # Expected output from webpack.wbn.js
+          VERSIONED_SWBN_FILENAME="smart_card_demo_${{ steps.package_version.outputs.version }}.swbn"
+          VERSIONED_SWBN_PATH="./dist/$VERSIONED_SWBN_FILENAME"
+
+          if [ ! -f "$ORIGINAL_SWBN_PATH" ]; then
+            echo "Error: Built SWBN file not found at $ORIGINAL_SWBN_PATH"
+            exit 1
+          fi
+
+          mv "$ORIGINAL_SWBN_PATH" "$VERSIONED_SWBN_PATH"
+          echo "Renamed SWBN to $VERSIONED_SWBN_FILENAME"
+
+          echo "swbn_path=$VERSIONED_SWBN_PATH" >> $GITHUB_OUTPUT
+          echo "swbn_filename=$VERSIONED_SWBN_FILENAME" >> $GITHUB_OUTPUT
+
+      - name: Prepare update.json
+        id: update_json_prep
+        run: |
+          set -e
+
+          SWBN_FILENAME_FOR_JSON="${{ steps.swbn_asset_prep.outputs.swbn_filename }}"
+          NEW_ENTRY_SRC="https://github.com/${{ github.repository }}/releases/download/${{ steps.package_version.outputs.version }}/$SWBN_FILENAME_FOR_JSON"
+
+          LATEST_RELEASE_TAG=${{ steps.package_version.outputs.previous_version }}
+
+          EXISTING_UPDATE_JSON_CONTENT="{\"versions\": []}" # Default if no previous version or file found
+          if [ -n "$LATEST_RELEASE_TAG" ]; then
+            echo "Latest release tag found: $LATEST_RELEASE_TAG"
+            if gh release download "$LATEST_RELEASE_TAG" --repo "${{ github.repository }}" -p "update.json" -O update_old.json; then
+              echo "Downloaded update.json from $LATEST_RELEASE_TAG"
+              if jq -e '.versions | .[]' update_old.json > /dev/null; then
+                EXISTING_UPDATE_JSON_CONTENT=$(cat update_old.json)
+              else
+                echo "Warning: update_old.json from $LATEST_RELEASE_TAG is not valid JSON or lacks .versions array. Starting with an empty versions list." >&2
+              fi
+            else
+              echo "No update.json found in latest release $LATEST_RELEASE_TAG. Starting with an empty versions list."
+            fi
+          else
+            echo "No previous releases found. Starting with an empty versions list for update.json."
+          fi
+
+          echo "Base update.json content for new entry: $EXISTING_UPDATE_JSON_CONTENT"
+
+          # Add new version entry, prepending to the 'versions' array for newest first
+          UPDATED_JSON_CONTENT=$(echo "$EXISTING_UPDATE_JSON_CONTENT" | jq \
+            --arg version "${{ steps.package_version.outputs.version }}" \
+            --arg src "$NEW_ENTRY_SRC" \
+            '.versions |= [{ "version": $version, "src": $src }] + .')
+
+          echo "$UPDATED_JSON_CONTENT" > update.json
+          echo "Generated update.json:"
+          cat update.json
+          echo "update_json_path=$(pwd)/update.json" >> $GITHUB_OUTPUT
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create Git tag
+        run: |
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
+          git tag -a "${{ steps.package_version.outputs.version }}" -m "Release ${{ steps.package_version.outputs.version }}"
+          git push origin "${{ steps.package_version.outputs.version }}"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          SWBN_ASSET_PATH: ${{ steps.swbn_asset_prep.outputs.swbn_path }}
+          UPDATE_JSON_ASSET_PATH: ${{ steps.update_json_prep.outputs.update_json_path }}
+        run: |
+          set -e
+          WEB_BUNDLE_ID="cpt62davrxj4yzauslsummydorzgy2kcnhbayaziceuqlzhaue7qaaic"
+          UPDATE_MANIFEST_URL="https://github.com/$GH_REPO/releases/download/${{ steps.package_version.outputs.version }}/update.json"
+
+          # Prepare release notes to a temporary file for correct formatting
+          NOTES_FILE="release_notes.md"
+          echo -e "---\n\n\`\`\`json\n[\n  {\n    \"web_bundle_id\": \"$WEB_BUNDLE_ID\",\n    \"update_manifest_url\": \"$UPDATE_MANIFEST_URL\"\n  }\n]\n\`\`\`" > "$NOTES_FILE"
+
+          ASSET_ARGS=("$SWBN_ASSET_PATH" "$UPDATE_JSON_ASSET_PATH")
+
+          gh release create "${{ steps.package_version.outputs.version }}" "${ASSET_ARGS[@]}" \
+            --repo "$GH_REPO" \
+            --title "Release ${{ steps.package_version.outputs.version }}" \
+            --notes-file "$NOTES_FILE" # Changed from --notes to --notes-file
