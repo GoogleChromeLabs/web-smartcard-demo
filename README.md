@@ -69,11 +69,13 @@ Card Demo" app available in the launcher as a newly installed app.
 To build a signed web bundle from this and sign it using a locally stored key,
 you have to generate appropriate signing keys - instructions on how to can be found in
 [this article](https://chromeos.dev/en/tutorials/getting-started-with-isolated-web-apps/2).
-The key path and password (optional, if your key is encrypted) need to be passed via
-environment variables. One way to do it is to create `.env` file in the repository root
-with the following contents (replace `...` with actual values):
+The key (or its path) and password (optional, if your key is encrypted) need to be passed via
+environment variables. One way to do it is to create `.env` file in the repository root with
+the following contents (replace `...` with actual values), it will be automatically sourced:
 
 ```sh
+# Use either PRIVATE_KEY or PRIVATE_KEY_PATH, not both!
+PRIVATE_KEY="..."
 PRIVATE_KEY_PATH="..."
 PRIVATE_KEY_PASSWORD="..."
 ```
