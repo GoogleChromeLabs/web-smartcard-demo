@@ -34,7 +34,7 @@ if (!privateKeyPassword) {
 
 var privateKey = undefined;
 
-if (!privateKeyText == !privateKeyPath) {
+if (!privateKeyText === !privateKeyPath) {
   throw new Error(
     "Exactly one out of PRIVATE_KEY and PRIVATE_KEY_PATH is required!",
   );
