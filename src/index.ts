@@ -14,13 +14,7 @@
  * limitations under the License.
  */
 
-import {
-  SmartCardConnection,
-  SmartCardContext,
-  SmartCardReaderStateIn,
-  SmartCardReaderStateOut,
-} from './smart-card'
-
+import { SmartCardReaderStateIn, SmartCardReaderStateOut } from 'w3c-web-smart-card';
 import * as apdu from './apdu'
 import * as ber from './ber'
 import * as piv from './piv'

@@ -20,6 +20,7 @@
   "homepage": "https://github.com/dandrader/web-smartcard-demo#readme",
   "devDependencies": {
     "@types/jest": "^29.5.14",
+    "@types/w3c-web-smart-card": "^0.0.1",
     "@typescript-eslint/eslint-plugin": "^8.32.1",
     "@typescript-eslint/parser": "^8.32.1",
     "clean-webpack-plugin": "^4.0.0",
