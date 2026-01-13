@@ -24,7 +24,7 @@ import {
 import * as apdu from './apdu'
 import * as ber from './ber'
 import * as piv from './piv'
-import { assert, toHexString } from './util'
+import { assert, toHexString, arrayBufferToHexString } from './util'
 
 import * as x509 from "@peculiar/x509";
 
@@ -41,6 +41,7 @@ interface ReaderUiElements {
   disconnectButton: HTMLButtonElement;
   readCertButton: HTMLButtonElement;
   certDiv: HTMLDivElement;
+  atrDiv: HTMLDivElement;
 }
 
 let readerTrackingAbortion: AbortController | undefined = undefined;
@@ -55,7 +56,116 @@ const PNP_NOTIFICATION = String.raw`\\?PnP?\Notification`;
 const START_TRACKING_STRING = "Start tracking readers";
 const STOP_TRACKING_STRING = "Stop tracking readers";
 
-async function addNewReaders(readerStatesIn: Array<SmartCardReaderStateIn>) {
+const ATR_LIST_URL = "https://raw.githubusercontent.com/LudovicRousseau/pcsc-tools/refs/heads/master/smartcard_list.txt";
+let atrMap: Map<string, string[]> | null = null;
+
+export async function fetchAndParseAtrList(): Promise<Map<string, string[]>> {
+  const response = await fetch(ATR_LIST_URL, { credentials: 'omit' });
+  if (!response.ok) {
+    throw new Error(`Failed to fetch ATR list: ${response.statusText}`);
+  }
+  const text = await response.text();
+  const lines = text.split('\n');
+  const map = new Map<string, string[]>();
+  let currentAtrRegex: string | null = null;
+  let currentDescriptions: string[] = [];
+
+  for (const line of lines) {
+    if (line.startsWith('#') || line.trim() === '') {
+      if (currentAtrRegex) {
+        map.set(currentAtrRegex, currentDescriptions);
+        currentAtrRegex = null;
+        currentDescriptions = [];
+      }
+      continue;
+    }
+
+    if (line.startsWith('\t')) {
+      if (currentAtrRegex) {
+        currentDescriptions.push(line.trim());
+      }
+    } else {
+      if (currentAtrRegex) {
+        map.set(currentAtrRegex, currentDescriptions);
+      }
+      currentAtrRegex = line.trim().replace(/ /g, '').toUpperCase();
+      currentDescriptions = [];
+    }
+  }
+  if (currentAtrRegex) {
+    map.set(currentAtrRegex, currentDescriptions);
+  }
+  return map;
+}
+
+export function matchAtr(atrHex: string, map: Map<string, string[]>): string[] | null {
+  for (const [regexStr, descriptions] of map.entries()) {
+    const regex = new RegExp('^' + regexStr.replace(/\.\./g, '[0-9A-F]{2}') + '$', 'i');
+    if (regex.test(atrHex)) {
+      return descriptions;
+    }
+  }
+  return null;
+}
+
+async function loadAtrMap() {
+  if (!atrMap) {
+    try {
+      atrMap = await fetchAndParseAtrList();
+    } catch (e: any) {
+      console.error("Failed to load ATR list:", e);
+      // atrMap remains null, so we won't attempt ATR matching.
+    }
+  }
+}
+
+async function displayAtrInfo(readerName: string, atr: ArrayBuffer | undefined) {
+  const elements = readerNameToElements.get(readerName);
+  if (!elements) return;
+
+  elements.atrDiv.textContent = ''; // Clear previous ATR info
+
+  if (!atr) {
+    const p = document.createElement("p");
+    p.textContent = "ATR: Not available";
+    elements.atrDiv.appendChild(p);
+    return;
+  }
+
+  const atrDisplay = arrayBufferToHexString(atr).toUpperCase();
+  const atrCompact = atrDisplay.replace(/ /g, '');
+  const pAtr = document.createElement("p");
+  pAtr.textContent = `ATR: ${atrDisplay}`;
+  elements.atrDiv.appendChild(pAtr);
+
+  if (!atrMap) {
+    const pError = document.createElement("p");
+    pError.textContent = "ATR database not loaded.";
+    pError.style.color = "orange";
+    elements.atrDiv.appendChild(pError);
+    return;
+  }
+
+  const matches = matchAtr(atrCompact, atrMap);
+  if (matches && matches.length > 0) {
+    const pMatch = document.createElement("p");
+    pMatch.textContent = "Possible card types:";
+    elements.atrDiv.appendChild(pMatch);
+    const ul = document.createElement("ul");
+    matches.forEach(desc => {
+      const li = document.createElement("li");
+      li.textContent = desc;
+      ul.appendChild(li);
+    });
+    elements.atrDiv.appendChild(ul);
+  } else {
+    const pNoMatch = document.createElement("p");
+    pNoMatch.textContent = "No match found in ATR database.";
+    elements.atrDiv.appendChild(pNoMatch);
+  }
+}
+
+async function addNewReaders(readerStatesIn: Array<SmartCardReaderStateIn>): Promise<Array<SmartCardReaderStateOut>> {
   assert(scardTrackingContext !== undefined, "addNewReaders: No scardTrackingContext");
 
   var newReaderStatesIn: Array<SmartCardReaderStateIn> = [];
@@ -70,7 +180,7 @@ async function addNewReaders(readerStatesIn: Array<SmartCardReaderStateIn>) {
   });
 
   if (newReaderStatesIn.length === 0) {
-    return;
+    return [];
   }
 
   const newReadersStateOut =
@@ -94,10 +204,12 @@ async function addNewReaders(readerStatesIn: Array<SmartCardReaderStateIn>) {
       currentCount: newReaderStateOut.eventCount,
     });
   });
+
+  return newReadersStateOut;
 }
 
 async function startStopTrackingReaders() {
-  if (trackReadersButton.innerText === START_TRACKING_STRING) {
+  if (trackReadersButton.textContent === START_TRACKING_STRING) {
     return startTrackingReaders();
   } else {
     return stopTrackingReaders();
@@ -136,24 +248,26 @@ function updateReaderUIState(readerName: string) {
 
 async function cleanupReaderConnectionAndUI(readerName: string, errorMessage?: string) {
   const elements = readerNameToElements.get(readerName);
-  if (elements && errorMessage) {
+  if (elements) {
     elements.certDiv.textContent = ""; // Clear previous content
-    const p = document.createElement("p");
-    p.style.color = "red";
-    p.innerText = "Error: " + errorMessage;
-    elements.certDiv.appendChild(p);
+    if (errorMessage) {
+      const p = document.createElement("p");
+      p.style.color = "red";
+      p.textContent = "Error: " + errorMessage;
+      elements.certDiv.appendChild(p);
+    }
   }
 
   const connection = readerConnections.get(readerName);
   if (connection) {
     try {
       await connection.disconnect();
-    } catch (e) {
+    } catch (e: any) {
       // If elements are still there, display this secondary error too, or log it.
       if (elements && elements.certDiv && !errorMessage) { // Avoid overwriting primary error
         const p = document.createElement("p");
         p.style.color = "orange";
-        p.innerText = `Note: Disconnect also failed: ${e.message || e}`;
+        p.textContent = `Note: Disconnect also failed: ${e.message || e}`;
         elements.certDiv.appendChild(p);
       }
     }
@@ -183,7 +297,7 @@ async function handleConnect(readerName: string) {
     if (elements) {
         const p = document.createElement("p");
         p.style.color = "green";
-        p.innerText = `Connected with protocol: ${connectionResult.activeProtocol}`;
+        p.textContent = `Connected with protocol: ${connectionResult.activeProtocol}`;
         elements.certDiv.appendChild(p);
     }
   } catch (e: any) {
@@ -200,29 +314,36 @@ async function handleDisconnect(readerName: string) {
   await cleanupReaderConnectionAndUI(readerName);
   if (elements) {
     const p = document.createElement("p");
-    p.innerText = "Disconnected.";
+    p.textContent = "Disconnected.";
     elements.certDiv.appendChild(p);
   }
 }
 
-function addDivForReader(readerName: string) {
+function addDivForReader(readerName: string, initialState?: SmartCardReaderStateOut) {
   const readerDiv = document.createElement("div");
 
+  const topSeparator = document.createElement("hr");
+  topSeparator.className = "top-separator";
+  readerDiv.appendChild(topSeparator);
+
   const p = document.createElement("p");
+  p.className = "reader-controls";
   const span = document.createElement("span");
-  span.innerText = readerName;
+  span.textContent = readerName;
+  span.style.float = "left";
+  const atrDiv = document.createElement("div");
   const certCardAuthDiv = document.createElement("div");
 
   const connectButton = document.createElement("button");
-  connectButton.innerText = "Connect";
+  connectButton.textContent = "Connect";
   connectButton.addEventListener('click', () => handleConnect(readerName));
 
   const disconnectButton = document.createElement("button");
-  disconnectButton.innerText = "Disconnect";
+  disconnectButton.textContent = "Disconnect";
   disconnectButton.addEventListener('click', () => handleDisconnect(readerName));
 
   const readCertificatesButton = document.createElement("button");
-  readCertificatesButton.innerText = "Read Certificate for Card Authentication";
+  readCertificatesButton.textContent = "Read Certificate for Card Authentication";
   readCertificatesButton.addEventListener('click', () => handleReadCertificateCommand(readerName));
 
   p.appendChild(span);
@@ -230,6 +351,7 @@ function addDivForReader(readerName: string) {
   p.appendChild(disconnectButton);
   p.appendChild(readCertificatesButton);
   readerDiv.appendChild(p);
+  readerDiv.appendChild(atrDiv);
   readerDiv.appendChild(certCardAuthDiv);
   readerDiv.appendChild(document.createElement("hr"));
 
@@ -240,8 +362,13 @@ function addDivForReader(readerName: string) {
     disconnectButton: disconnectButton,
     readCertButton: readCertificatesButton,
     certDiv: certCardAuthDiv,
+    atrDiv: atrDiv,
   });
   updateReaderUIState(readerName); // Set initial button states
+
+  if (initialState && initialState.eventState.present) {
+    displayAtrInfo(readerName, initialState.answerToReset);
+  }
 }
 
 function updateReadersHTML(readerStatesIn: Array<SmartCardReaderStateIn>) {
@@ -272,9 +399,9 @@ function updateReadersHTML(readerStatesIn: Array<SmartCardReaderStateIn>) {
 
   // Handle the "No readers" message
   if (readerNameToElements.size === 0 && !readerStatesIn.some(s => s.readerName !== PNP_NOTIFICATION)) {
-    readersListElement.innerText = "No smart card readers available.";
-  } else if (readersListElement.innerText !== "" && readerNameToElements.size > 0) {
-    readersListElement.innerText = ""; // Clear message if readers are now present
+    readersListElement.textContent = "No smart card readers available.";
+  } else if (readersListElement.textContent !== "" && readerNameToElements.size > 0) {
+    readersListElement.textContent = ""; // Clear message if readers are now present
     readerNameToElements.forEach(elements => { // Ensure divs are parented
         if (!elements.readerDiv.parentNode) {
             readersListElement.appendChild(elements.readerDiv);
@@ -299,6 +426,7 @@ function updateReaderStatesIn(
       (stateIn) => stateOut.readerName === stateIn.readerName);
     assert(stateIn !== undefined, "updateReaderStatesIn: stateIn !== undefined");
 
+    const oldPresent = stateIn.currentState.present;
     stateIn.currentState = {
       empty: eventState.empty ? eventState.empty : false,
       present: eventState.present ? eventState.present : false,
@@ -308,6 +436,18 @@ function updateReaderStatesIn(
     };
 
     stateIn.currentCount = stateOut.eventCount;
+
+    if (eventState.present && !oldPresent) {
+      // Card was just inserted
+      displayAtrInfo(stateOut.readerName, stateOut.answerToReset);
+    } else if (!eventState.present && oldPresent) {
+      // Card was just removed
+      const elements = readerNameToElements.get(stateOut.readerName);
+      if (elements) {
+        elements.atrDiv.textContent = '';
+        elements.certDiv.textContent = '';
+      }
+    }
   });
 }
 
@@ -316,6 +456,8 @@ async function startTrackingReaders() {
     if (scardTrackingContext === undefined) {
       scardTrackingContext = await navigator.smartCard.establishContext();
     }
+
+    await loadAtrMap();
 
     var readerStatesIn: Array<SmartCardReaderStateIn> = [];
 
@@ -326,13 +468,22 @@ async function startTrackingReaders() {
       currentState: {}
     });
 
-    trackReadersButton.innerText = STOP_TRACKING_STRING;
+    trackReadersButton.textContent = STOP_TRACKING_STRING;
     refreshReadersButton.disabled = true;
 
     while (true) {
-      await addNewReaders(readerStatesIn);
+      const newReaderStates = await addNewReaders(readerStatesIn);
 
       updateReadersHTML(readerStatesIn);
+
+      // Apply initial ATR info for newly detected readers now that DOM exists
+      if (newReaderStates) {
+        newReaderStates.forEach(state => {
+           if (state.eventState.present) {
+               displayAtrInfo(state.readerName, state.answerToReset);
+           }
+        });
+      }
 
       assert(readerTrackingAbortion === undefined,
              "assertion failed: readerTrackingAbortion === undefined");
@@ -348,21 +499,23 @@ async function startTrackingReaders() {
       updateReaderStatesIn(readerStatesIn, readerStatesOut);
     }
 
-  } catch (e) {
+  } catch (e: any) {
     // The AbortError DOMException is the expected result of a user's action
     // (clicking on "stop tracking". So we don't report this particuar error.
     if (!(e instanceof DOMException) || e.name !== "AbortError") {
-      readersListElement.innerText = "Failed start tracking: " + e.message;
+      readersListElement.textContent = "Failed start tracking: " + e.message;
     }
   }
 
-  trackReadersButton.innerText = START_TRACKING_STRING;
+  trackReadersButton.textContent = START_TRACKING_STRING;
   readerTrackingAbortion = undefined;
   refreshReadersButton.disabled = false;
 }
 
 async function refreshReadersList() {
   if (!scardContext) return;
+
+  await loadAtrMap();
 
   let fetchedReaderNames: string[];
   try {
@@ -375,13 +528,13 @@ async function refreshReadersList() {
         await cleanupReaderConnectionAndUI(name);
     });
     readerNameToElements.clear();
-    readersListElement.innerText = "Failed to list readers: " + e.message;
+    readersListElement.textContent = "Failed to list readers: " + e.message;
     return;
   }
 
   // If "No smart card readers available." was the text, clear it to allow adding children.
-  if (readersListElement.innerText !== "" && fetchedReaderNames.length > 0) {
-      readersListElement.innerText = "";
+  if (readersListElement.textContent !== "" && fetchedReaderNames.length > 0) {
+      readersListElement.textContent = "";
   }
 
   const knownReaderNames = new Set(readerNameToElements.keys());
@@ -399,21 +552,42 @@ async function refreshReadersList() {
     }
   }
 
+  let initialStates: SmartCardReaderStateOut[] = [];
+  if (fetchedReaderNames.length > 0) {
+    const readerStatesIn: SmartCardReaderStateIn[] = fetchedReaderNames.map(name => ({
+      readerName: name,
+      currentState: { unaware: true },
+    }));
+    try {
+      initialStates = await scardContext.getStatusChange(readerStatesIn, { timeout: 100 });
+    } catch (e: any) {
+      console.error("Failed to get initial reader status:", e);
+      // Continue without initial state info
+    }
+  }
+  const initialStatesMap = new Map(initialStates.map(state => [state.readerName, state]));
+
   // Add new readers / ensure existing ones are in DOM
   for (const name of fetchedReaderNames) {
     if (!readerNameToElements.has(name)) {
-      addDivForReader(name);
+      addDivForReader(name, initialStatesMap.get(name));
     } else {
-        // Ensure it's in the DOM if it was somehow removed (e.g. by innerText)
+        // Ensure it's in the DOM if it was somehow removed (e.g. by textContent)
         const elements = readerNameToElements.get(name)!;
         if (!elements.readerDiv.parentNode) {
             readersListElement.appendChild(elements.readerDiv);
+        }
+        
+        // Update ATR for existing readers
+        const initialState = initialStatesMap.get(name);
+        if (initialState && initialState.eventState.present) {
+            displayAtrInfo(name, initialState.answerToReset);
         }
     }
   }
 
   if (readerNameToElements.size === 0 && fetchedReaderNames.length === 0) {
-    readersListElement.innerText = "No smart card readers available.";
+    readersListElement.textContent = "No smart card readers available.";
   }
 }
 
@@ -555,7 +729,7 @@ function addValueOnlyRow(table: HTMLTableElement, value: string) {
     tr.appendChild(tdValue);
 
     tdValue.colSpan = 2;
-    tdValue.innerText = value;
+    tdValue.textContent = value;
 }
 
 function addRow(table: HTMLTableElement, field: string, value: string) {
@@ -566,8 +740,8 @@ function addRow(table: HTMLTableElement, field: string, value: string) {
     let tdValue = document.createElement("td");
     tr.appendChild(tdValue);
 
-    tdField.innerText = field;
-    tdValue.innerText = value;
+    tdField.textContent = field;
+    tdValue.textContent = value;
 }
 
 function displayCertificate(cert: x509.X509Certificate,
@@ -582,7 +756,7 @@ function displayCertificate(cert: x509.X509Certificate,
       tr.appendChild(th);
 
       th.colSpan = 2;
-      th.innerText = title;
+      th.textContent = title;
     }
 
     const signatureStr =
@@ -643,7 +817,7 @@ async function handleReadCertificateCommand(readerName: string) {
         // but the actual certificate data within it was empty.
         if (!elements.certDiv.textContent) { // Avoid overwriting other errors.
           const p = document.createElement("p");
-          p.innerText = "Certificate is present but empty.";
+          p.textContent = "Certificate is present but empty.";
           elements.certDiv.appendChild(p);
         }
       }
@@ -662,7 +836,7 @@ async function handleReadCertificateCommand(readerName: string) {
 }
 
 function showFatalError(message: string) {
-  readersListElement.innerText = message;
+  readersListElement.textContent = message;
   refreshReadersButton.disabled = true;
   trackReadersButton.disabled = true;
 }
@@ -683,7 +857,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   try {
     scardContext = await navigator.smartCard.establishContext();
-  } catch (e) {
+    await refreshReadersList(); // Load readers on startup
+  } catch (e: any) {
     showFatalError("Failed to establish context: " + e.message);
     scardContext = undefined;
   }

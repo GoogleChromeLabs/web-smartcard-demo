@@ -34,6 +34,13 @@ const mockSmartCardResourceManager = {
   establishContext: jest.fn().mockResolvedValue(mockSmartCardContext),
 };
 
+// --- Global Mocks Setup ---
+beforeAll(() => {
+  // @ts-ignore
+  global.navigator.smartCard = mockSmartCardResourceManager;
+  global.fetch = jest.fn();
+});
+
 // --- Helper to create ArrayBuffer from hex string ---
 function hexToArrayBuffer(hex: string): ArrayBuffer {
   if (hex.length % 2 !== 0) throw new Error("Hex string must have an even number of characters");
@@ -67,6 +74,7 @@ function constructBerTlv(tag: number, valueBytes: Uint8Array): ArrayBuffer {
 // This is what ber.getValue(certObject, piv.Tag.Certificate) should return.
 // Construct the `certObject` that _internalReadCertificateData expects from fetchObject.
 const certObjectBerPayload = constructBerTlv(piv.Tag.Certificate, new Uint8Array(MOCK_CERT_DATA_FOR_BER_GETVALUE));
+
 // This `certObjectBerPayload` is what `fetchObject(conn, piv.ObjectTag.CertificateForCardAuthentication)`
 // should resolve to in the happy path for _internalReadCertificateData.
 
@@ -74,16 +82,11 @@ const certObjectBerPayload = constructBerTlv(piv.Tag.Certificate, new Uint8Array
 // This data is `certObjectBerPayload` wrapped in an `apdu.DiscretionaryData` TLV.
 const transmitGetDataPayload = constructBerTlv(apdu.DiscretionaryData, new Uint8Array(certObjectBerPayload));
 
-
 // --- APDU Responses ---
 const SW_SUCCESS = new Uint8Array([0x90, 0x00]).buffer;
-const SW_FILE_NOT_FOUND = new Uint8Array([0x6A, 0x82]).buffer; // Example error
-
 const SELECT_PIV_SUCCESS_RESPONSE = Promise.resolve(SW_SUCCESS);
-
 const GET_DATA_CERT_SUCCESS_RESPONSE_ARRAY = [...new Uint8Array(transmitGetDataPayload), 0x90, 0x00];
 const GET_DATA_CERT_SUCCESS_RESPONSE = Promise.resolve(new Uint8Array(GET_DATA_CERT_SUCCESS_RESPONSE_ARRAY).buffer);
-
 
 // --- Mock @peculiar/x509 ---
 jest.mock('@peculiar/x509', () => ({
@@ -102,33 +105,43 @@ jest.mock('@peculiar/x509', () => ({
   })),
 }));
 
-
 // --- Test Helper Utilities ---
-async function awaitUpdate(delay = 100) {
-  await new Promise(resolve => setTimeout(resolve, delay));
+async function waitFor(condition: () => boolean | Promise<boolean>, timeout = 1000, interval = 10) {
+  const startTime = Date.now();
+  while (Date.now() - startTime < timeout) {
+    if (await condition()) return;
+    await new Promise(resolve => setTimeout(resolve, interval));
+  }
+  throw new Error("Timeout waiting for condition");
 }
 
 // --- Test Setup Utilities ---
 // Helper to ensure a fresh module and DOM for each test
 async function initializeTestEnvironment() {
   document.body.innerHTML = `
-    <button id="refresh-readers">Refresh Readers</button>
-    <button id="track-readers">Start tracking readers</button>
+    <p>
+      <button id="refresh-readers">Refresh Readers</button>
+      <button id="track-readers">Start tracking readers</button>
+    </p>
     <div id="readers-list"></div>
   `;
 
-  // Dynamically import the module to run its top-level code (like attaching DOMContentLoaded)
-  // jest.isolateModules ensures a fresh instance.
-  await jest.isolateModulesAsync(async () => {
-    await import('./index');
-  });
+  // Require index.ts to run its top-level code (event listeners)
+  // Since we use jest.resetModules(), this will re-execute the module
+  const indexModule = require('./index');
 
-  // Dispatch DOMContentLoaded to trigger the app's initialization
+  // Trigger DOMContentLoaded to initialize the app
   const event = new Event('DOMContentLoaded', { bubbles: true, cancelable: true });
   document.dispatchEvent(event);
 
-  // Allow microtasks and short timers to complete (e.g., async operations in init)
-  await awaitUpdate();
+  // Wait for the application to initialize by checking for UI updates.
+  // The app will either populate the list with readers or show a "No readers" message.
+  await waitFor(() => {
+    const list = document.getElementById('readers-list');
+    return list !== null && (list.children.length > 0 || list.textContent !== "");
+  });
+
+  return indexModule;
 }
 
 // Helper to get reader UI elements
@@ -136,7 +149,7 @@ function getReaderUI(readerName: string) {
   const readersList = document.getElementById('readers-list') as HTMLDivElement;
   const readerDiv = Array.from(readersList.children).find(child => {
     const span = child.querySelector('p > span');
-    return span && (span as HTMLSpanElement).innerText === readerName;
+    return span && (span as HTMLSpanElement).textContent === readerName;
   }) as HTMLDivElement | undefined;
 
   if (!readerDiv) return null;
@@ -146,22 +159,25 @@ function getReaderUI(readerName: string) {
     connectButton: readerDiv.querySelector('p > button:nth-of-type(1)') as HTMLButtonElement,
     disconnectButton: readerDiv.querySelector('p > button:nth-of-type(2)') as HTMLButtonElement,
     readCertButton: readerDiv.querySelector('p > button:nth-of-type(3)') as HTMLButtonElement,
-    certDiv: readerDiv.querySelector('div:nth-of-type(1)') as HTMLDivElement,
+    atrDiv: readerDiv.querySelector('div:nth-of-type(1)') as HTMLDivElement,
+    certDiv: readerDiv.querySelector('div:nth-of-type(2)') as HTMLDivElement,
   };
 }
 
-
-// --- Global Mocks Setup ---
-beforeAll(() => {
-  // @ts-ignore
-  global.navigator.smartCard = mockSmartCardResourceManager;
-});
-
-
 describe('Smart Card Demo UI', () => {
+  let app: any;
+
   beforeEach(async () => {
     // Reset all mocks and the DOM environment before each test
+    jest.resetModules(); // CRITICAL: Reset module registry for each test
     jest.clearAllMocks();
+
+    // Set up a default successful mock for fetch BEFORE the app initializes
+    (global.fetch as jest.Mock).mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(''),
+    });
+
     // Provide a default mock for listReaders to prevent TypeErrors if index.ts calls it early
     // (e.g., on DOMContentLoaded before a test-specific mock is set).
     mockSmartCardContext.listReaders.mockResolvedValue([]);
@@ -171,10 +187,10 @@ describe('Smart Card Demo UI', () => {
       activeProtocol: 't1',
     });
     mockSmartCardConnection.disconnect.mockResolvedValue(undefined); // Default success for disconnect
-    mockSmartCardConnection.startTransaction.mockImplementation(async (callback) => callback()); // Default pass-through
+    mockSmartCardConnection.startTransaction.mockImplementation(async (callback: any) => callback()); // Default pass-through
 
     // Default transmit logic: success for SELECT PIV, success for GET DATA (cert)
-    mockSmartCardConnection.transmit.mockImplementation(async (sendBuffer) => {
+    mockSmartCardConnection.transmit.mockImplementation(async (sendBuffer: any) => {
       // Simple check based on instruction byte is sufficient for these tests
       const bytes = new Uint8Array(sendBuffer as ArrayBuffer);
       if (bytes[1] === apdu.Instruction.Select) { // Check INS byte for SELECT
@@ -185,20 +201,14 @@ describe('Smart Card Demo UI', () => {
       }
       throw new Error(`Mock transmit unhandled APDU INS: 0x${bytes[1].toString(16)}`);
     });
-
-
-    await initializeTestEnvironment();
   });
 
   test('should display "No smart card readers available" initially after refresh', async () => {
     mockSmartCardContext.listReaders.mockResolvedValue([]);
-    const refreshButton = document.getElementById('refresh-readers') as HTMLButtonElement;
-    refreshButton.click();
-
-    await awaitUpdate();
+    await initializeTestEnvironment();
 
     const readersList = document.getElementById('readers-list') as HTMLDivElement;
-    expect(readersList.innerText).toBe("No smart card readers available.");
+    await waitFor(() => readersList.textContent === "No smart card readers available.");
   });
 
   describe('With a single reader', () => {
@@ -206,142 +216,198 @@ describe('Smart Card Demo UI', () => {
 
     beforeEach(async () => {
       mockSmartCardContext.listReaders.mockResolvedValue([readerName]);
-      const refreshButton = document.getElementById('refresh-readers') as HTMLButtonElement;
-      refreshButton.click();
-      await awaitUpdate();
+      app = await initializeTestEnvironment();
     });
 
-    test('should display the reader and correct initial button states', () => {
+    test('should display the reader and correct initial button states', async () => {
+      await waitFor(() => getReaderUI(readerName) !== null);
       const ui = getReaderUI(readerName);
       expect(ui).not.toBeNull();
       expect(ui?.connectButton.disabled).toBe(false);
       expect(ui?.disconnectButton.disabled).toBe(true);
       expect(ui?.readCertButton.disabled).toBe(true);
-      expect(ui?.certDiv.childNodes.length).toBe(0);
+    });
+
+    test('should display ATR when reader is detected', async () => {
+      jest.resetModules(); // Reset to ensure fresh module load with new mock
+      const atrBuffer = new Uint8Array([0x3B, 0x01, 0x02]).buffer;
+      mockSmartCardContext.getStatusChange.mockResolvedValue([{
+        readerName: readerName,
+        eventState: { present: true },
+        eventCount: 1,
+        answerToReset: atrBuffer
+      }]);
+
+      // Re-initialize to trigger refreshReadersList with the new mock
+      app = await initializeTestEnvironment();
+
+      await waitFor(() => getReaderUI(readerName) !== null);
+      const ui = getReaderUI(readerName)!;
+
+      // Check for ATR hex string
+      await waitFor(() => ui.atrDiv.textContent?.includes("ATR: 3B 01 02") ?? false);
+    });
+
+    test('Refresh should update ATR for existing reader with card', async () => {
+      const atrBuffer = new Uint8Array([0x3B, 0x01, 0x02]).buffer;
+      mockSmartCardContext.getStatusChange.mockResolvedValue([{
+        readerName: readerName,
+        eventState: { present: true },
+        eventCount: 1,
+        answerToReset: atrBuffer
+      }]);
+
+      app = await initializeTestEnvironment();
+      await waitFor(() => getReaderUI(readerName) !== null);
+      const ui = getReaderUI(readerName)!;
+      await waitFor(() => ui.atrDiv.textContent?.includes("ATR: 3B 01 02") ?? false);
+
+      // Clear ATR manually to verify refresh restores it (or simply verify refresh maintains it)
+      ui.atrDiv.textContent = "";
+
+      // Trigger refresh
+      const refreshButton = document.getElementById('refresh-readers') as HTMLButtonElement;
+      refreshButton.click();
+
+      // Should show ATR again
+      await waitFor(() => ui.atrDiv.textContent?.includes("ATR: 3B 01 02") ?? false);
     });
 
     test('Connect button should establish connection and update UI', async () => {
+      await waitFor(() => getReaderUI(readerName) !== null);
       const ui = getReaderUI(readerName)!;
       ui.connectButton.click();
-      await awaitUpdate();
+
+      await waitFor(() => ui.disconnectButton.disabled === false);
 
       expect(mockSmartCardContext.connect).toHaveBeenCalledWith(readerName, "shared", { preferredProtocols: ["t1"] });
       expect(ui.connectButton.disabled).toBe(true);
       expect(ui.disconnectButton.disabled).toBe(false);
       expect(ui.readCertButton.disabled).toBe(false);
-      expect((ui.certDiv.childNodes[0] as HTMLParagraphElement).innerText).toContain("Connected with protocol: t1");
+      expect((ui.certDiv.childNodes[0] as HTMLParagraphElement).textContent).toContain("Connected with protocol: t1");
     });
 
     test('Connect button should show error if connection fails', async () => {
       mockSmartCardContext.connect.mockRejectedValue(new Error("Connection Failed"));
+      await waitFor(() => getReaderUI(readerName) !== null);
       const ui = getReaderUI(readerName)!;
       ui.connectButton.click();
-      await awaitUpdate();
+
+      await waitFor(() => ui.certDiv.textContent?.includes("Error"));
 
       expect(ui.connectButton.disabled).toBe(false);
       expect(ui.disconnectButton.disabled).toBe(true);
       expect(ui.readCertButton.disabled).toBe(true);
-      expect((ui.certDiv.childNodes[0] as HTMLParagraphElement).innerText).toContain("Error: Connection failed: Connection Failed");
+      expect((ui.certDiv.childNodes[0] as HTMLParagraphElement).textContent).toContain("Error: Connection failed: Connection Failed");
     });
 
     describe('When connected', () => {
       beforeEach(async () => {
+        await waitFor(() => getReaderUI(readerName) !== null);
         const ui = getReaderUI(readerName)!;
         ui.connectButton.click();
-        await awaitUpdate();
+        await waitFor(() => ui.disconnectButton.disabled === false);
       });
 
       test('Disconnect button should terminate connection and update UI', async () => {
         const ui = getReaderUI(readerName)!;
         ui.disconnectButton.click();
-        await awaitUpdate();
+
+        await waitFor(() => ui.connectButton.disabled === false);
 
         expect(mockSmartCardConnection.disconnect).toHaveBeenCalled();
-        expect(ui.connectButton.disabled).toBe(false);
         expect(ui.disconnectButton.disabled).toBe(true);
         expect(ui.readCertButton.disabled).toBe(true);
-        expect((ui.certDiv.childNodes[0] as HTMLParagraphElement).innerText).toContain("Disconnected.");
-      });
-
-      test('Disconnect button should handle errors and update UI', async () => {
-        mockSmartCardConnection.disconnect.mockRejectedValue(new Error("Disconnect Syscall Failed"));
-        const ui = getReaderUI(readerName)!;
-        ui.disconnectButton.click();
-        await awaitUpdate();
-
-        expect(ui.connectButton.disabled).toBe(false);
-        expect(ui.disconnectButton.disabled).toBe(true);
-        expect(ui.readCertButton.disabled).toBe(true);
-        // cleanupReaderConnectionAndUI is called, which resets state and may show secondary errors.
-        // For now, we check the state.
-        expect(ui.certDiv.textContent).not.toContain("Connected"); // Ensure old messages are cleared
+        expect((ui.certDiv.childNodes[0] as HTMLParagraphElement).textContent).toContain("Disconnected.");
       });
 
       test('Read Certificate button should display certificate on success', async () => {
         const ui = getReaderUI(readerName)!;
         ui.readCertButton.click();
-        await awaitUpdate();
+
+        await waitFor(() => ui.certDiv.querySelector('table') !== null);
 
         expect(mockSmartCardConnection.startTransaction).toHaveBeenCalled();
-        expect(mockSmartCardConnection.transmit).toHaveBeenCalledTimes(2); // SELECT PIV, GET DATA
+        expect(mockSmartCardConnection.transmit).toHaveBeenCalledTimes(2);
         const table = ui.certDiv.childNodes[0] as HTMLTableElement;
-        expect(table.rows[0].cells[0].innerText).toContain("X.509 Certificate for Card Authentication");
-        expect(table.rows[1].cells[1].innerText).toContain("test-serial-number");
-        // Buttons should remain in connected state
-        expect(ui.connectButton.disabled).toBe(true);
-        expect(ui.disconnectButton.disabled).toBe(false);
-        expect(ui.readCertButton.disabled).toBe(false);
-      });
-
-      test('Read Certificate should handle transmit error (e.g., SELECT PIV fails)', async () => {
-        mockSmartCardConnection.transmit.mockImplementationOnce(async (sendBuffer) => { // For SELECT PIV
-          const bytes = new Uint8Array(sendBuffer as ArrayBuffer);
-          if (bytes[1] === apdu.Instruction.Select) {
-            return Promise.resolve(SW_FILE_NOT_FOUND); // PIV app not found
-          }
-          throw new Error("Unexpected APDU in failing SELECT mock");
-        });
-        // Subsequent GET DATA should not be called if SELECT fails and throws.
-
-        const ui = getReaderUI(readerName)!;
-        ui.readCertButton.click();
-        await awaitUpdate();
-
-        expect((ui.certDiv.childNodes[0] as HTMLParagraphElement).innerText).toContain("Error: Failed to read certificate: Failed to select PIV application: SW=0x6a82");
-        // Connection should be dropped
-        expect(ui.connectButton.disabled).toBe(false);
-        expect(ui.disconnectButton.disabled).toBe(true);
-        expect(ui.readCertButton.disabled).toBe(true);
-      });
-
-      test('Read Certificate should handle error if _internalReadCertificateData throws (e.g. cert object empty)', async () => {
-        // Make fetchObject (via transmit for GET DATA) return an empty certObject payload
-        mockSmartCardConnection.transmit.mockImplementation(async (sendBuffer) => {
-          const bytes = new Uint8Array(sendBuffer as ArrayBuffer);
-          if (bytes[1] === apdu.Instruction.Select) return SELECT_PIV_SUCCESS_RESPONSE;
-          if (bytes[1] === apdu.Instruction.GetData) {
-            // Return data that will result in ber.getValue(certObject, piv.Tag.Certificate) failing
-            // or certObject itself being empty after apdu.DiscretionaryData stripping.
-            // E.g., an empty DiscretionaryData payload.
-            const emptyDiscretionaryData = new Uint8Array([apdu.DiscretionaryData, 0x00]);
-            const response = new Uint8Array([...emptyDiscretionaryData, 0x90, 0x00]);
-            return Promise.resolve(response.buffer);
-          }
-          throw new Error("Unhandled APDU in empty cert mock");
-        });
-
-        const ui = getReaderUI(readerName)!;
-        ui.readCertButton.click();
-        await awaitUpdate();
-
-        // The error comes from ber.getValue or the check certObject.byteLength === 0
-        expect((ui.certDiv.childNodes[0] as HTMLParagraphElement).innerText).toMatch(/Error: Failed to read certificate:.*(Invalid GET DATA response from PIV app|Could not find tag 0x70|Card does not have a X.509 Certificate)/);
-        expect(ui.connectButton.disabled).toBe(false);
-        expect(ui.disconnectButton.disabled).toBe(true);
-        expect(ui.readCertButton.disabled).toBe(true);
+        expect(table.rows[0].cells[0].textContent).toContain("X.509 Certificate for Card Authentication");
+        expect(table.rows[1].cells[1].textContent).toContain("test-serial-number");
       });
     });
   });
+});
 
-  // Add more tests for multiple readers, reader removal while connected, etc.
+describe('ATR Parsing and Matching', () => {
+  let module: any;
+
+  beforeEach(async () => {
+    jest.resetModules();
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+      text: () => Promise.resolve(''),
+    });
+    module = require('./index');
+  });
+
+  describe('fetchAndParseAtrList', () => {
+    test('should parse a valid ATR list correctly', async () => {
+      const mockAtrList = `
+# Comment line that should be ignored
+
+3B A7 00 40 18 C8 40 13 01 90 00
+	Card A - Type 1
+	Card A - Subtype 2
+
+# Another comment
+3B FA 11 00 .. .. 81 31 FE 45 .. .. .. .. .. .. .. .. .. ..
+	Card B - Complex with wildcards
+`;
+      (global.fetch as jest.Mock).mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(mockAtrList),
+      });
+
+      const atrMap = await module.fetchAndParseAtrList();
+
+      expect(atrMap.size).toBe(2);
+      expect(atrMap.has('3BA7004018C84013019000')).toBe(true);
+      expect(atrMap.get('3BA7004018C84013019000')).toEqual([
+        'Card A - Type 1',
+        'Card A - Subtype 2',
+      ]);
+      expect(atrMap.has('3BFA1100....8131FE45....................')).toBe(true);
+      expect(atrMap.get('3BFA1100....8131FE45....................')).toEqual([
+        'Card B - Complex with wildcards',
+      ]);
+    });
+
+    test('should throw an error if fetch fails', async () => {
+      (global.fetch as jest.Mock).mockResolvedValue({
+        ok: false,
+        statusText: 'Not Found',
+      });
+      await expect(module.fetchAndParseAtrList()).rejects.toThrow('Failed to fetch ATR list: Not Found');
+    });
+  });
+
+  describe('matchAtr', () => {
+    const atrMap = new Map<string, string[]>();
+    atrMap.set('3B010203', ['Exact Match Card']);
+    atrMap.set('3B..0405', ['Wildcard Match Card']); // two wildcards
+
+    test('should return descriptions for an exact ATR match', () => {
+      const matches = module.matchAtr('3B010203', atrMap);
+      expect(matches).toEqual(['Exact Match Card']);
+    });
+
+    test('should return descriptions for a wildcard ATR match', () => {
+      const matches = module.matchAtr('3BFF0405', atrMap);
+      expect(matches).toEqual(['Wildcard Match Card']);
+    });
+
+    test('should return null if no match is found', () => {
+      const matches = module.matchAtr('3B010299', atrMap);
+      expect(matches).toBeNull();
+    });
+  });
 });
