@@ -31,3 +31,9 @@ export function toHexString(bytes: any,
     return hexStr;
   }).join('');
 };
+
+export function arrayBufferToHexString(arrayBuffer: ArrayBuffer): string {
+  return Array.from(new Uint8Array(arrayBuffer))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join(' ');
+}
