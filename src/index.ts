@@ -14,13 +14,7 @@
  * limitations under the License.
  */
 
-import {
-  SmartCardConnection,
-  SmartCardContext,
-  SmartCardReaderStateIn,
-  SmartCardReaderStateOut,
-} from './smart-card'
-
+import { SmartCardReaderStateIn, SmartCardReaderStateOut } from 'w3c-web-smart-card';
 import * as apdu from './apdu'
 import * as ber from './ber'
 import * as piv from './piv'
@@ -153,7 +147,7 @@ async function cleanupReaderConnectionAndUI(readerName: string, errorMessage?: s
       if (elements && elements.certDiv && !errorMessage) { // Avoid overwriting primary error
         const p = document.createElement("p");
         p.style.color = "orange";
-        p.innerText = `Note: Disconnect also failed: ${e.message || e}`;
+        p.innerText = `Note: Disconnect also failed: ${(e instanceof Error) ? e.message : String(e)}`;
         elements.certDiv.appendChild(p);
       }
     }
@@ -352,7 +346,7 @@ async function startTrackingReaders() {
     // The AbortError DOMException is the expected result of a user's action
     // (clicking on "stop tracking". So we don't report this particuar error.
     if (!(e instanceof DOMException) || e.name !== "AbortError") {
-      readersListElement.innerText = "Failed start tracking: " + e.message;
+      readersListElement.innerText = `Failed start tracking: ${(e instanceof Error) ? e.message : String(e)}`;
     }
   }
 
@@ -684,7 +678,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   try {
     scardContext = await navigator.smartCard.establishContext();
   } catch (e) {
-    showFatalError("Failed to establish context: " + e.message);
+    showFatalError(`Failed to establish context: ${(e instanceof Error) ? e.message : String(e)}`);
     scardContext = undefined;
   }
 });
