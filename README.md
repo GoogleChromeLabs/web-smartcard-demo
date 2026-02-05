@@ -112,6 +112,56 @@ npm run build-gcp-kms
 if you are correctly authenticated for the purpose of [GCP KMS Node.js client],
 the ready bundle will appear in `dist/smart_card_demo.swbn`.
 
+## 🧪 Automated Testing (Emulation)
+Smart Card Emulation (Chrome version >= 146.0.7667.0) enables a remote debugging workflow. 
+You launch Chrome (the Host) with specific debugging flags, and a Node.js test script (the Client) connects to it via the DevTools Protocol to automatically install the app, launch it, and drive the emulation.
+
+### Step 1: Launch the Host (Chrome)
+
+You need a Chrome instance listening on port 9222 with PWA debugging enabled.
+
+#### Option A: Local Chromium Build
+Run your custom Chrome binary.
+```bash
+~/chrome/src/out/current_link/chrome \
+  --remote-debugging-port=9222 \
+  --enable-features=IsolatedWebApps,IsolatedWebAppDevMode \
+  --enable-devtools-pwa-handler \
+  --system-developer-mode
+```
+
+#### Option B: Physical ChromeOS Device (DUT)
+Configure the DUT via SSH to allow remote debugging and PWA control.
+
+1. SSH into the DUT with Port Forwarding Use the following command to connect to your DUT. 
+This forwards the remote debugging port (9222) to your machine and your local dev server (8080) to the DUT.
+```bash
+ssh -L 9222:localhost:9222 -R 8080:localhost:8080 root@<DUT_IP_ADDRESS>
+```
+
+2. Configure Chrome Flags Once logged into the DUT, edit /etc/chrome_dev.conf to enable the required features:
+```bash
+echo "--remote-debugging-port=9222" >> /etc/chrome_dev.conf
+echo "--enable-features=IsolatedWebApps,IsolatedWebAppDevMode" >> /etc/chrome_dev.conf
+echo "--enable-devtools-pwa-handler" >> /etc/chrome_dev.conf
+```
+
+3. Restart the UI Apply the changes by restarting the ChromeOS UI:
+```
+restart ui
+```
+
+Keep the SSH session open. This maintains the tunnel that allows the test script to talk to the DUT.
+
+### Step 2: Run the Test Runner
+Once Chrome is listening on localhost:9222 (via the SSH tunnel or locally), run the test script.
+
+Note: If testing on a physical DUT, ensure the .swbn file is copied to the device at the same path expected by the script, or update the script to point to the file location on the DUT.
+
+```Bash
+node tests/test-demo.js
+```
+
 [Web Smart Card API]: https://wicg.github.io/web-smart-card/
 [PC/SC]: https://en.wikipedia.org/wiki/PC/SC
 [Smart Card Connector]: https://github.com/GoogleChromeLabs/chromeos_smart_card_connector
