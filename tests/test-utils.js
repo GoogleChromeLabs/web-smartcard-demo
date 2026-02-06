@@ -6,23 +6,23 @@ import * as x509 from '@peculiar/x509';
  * Returns the raw DER bytes as a Hex string.
  */
 export async function generateSelfSignedCertHex() {
-  x509.cryptoProvider.set(crypto.webcrypto);
-  
-  const keys = await crypto.webcrypto.subtle.generateKey(
-    { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256", publicExponent: new Uint8Array([1, 0, 1]), modulusLength: 2048 },
-    true, ["sign", "verify"]
-  );
+    x509.cryptoProvider.set(crypto.webcrypto);
 
-  const cert = await x509.X509CertificateGenerator.createSelfSigned({
-    serialNumber: "01",
-    name: "CN=Dynamic Test Card",
-    notBefore: new Date(),
-    notAfter: new Date(Date.now() + 86400000 * 365), // 1 year
-    signingAlgorithm: { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
-    keys: keys,
-  });
+    const keys = await crypto.webcrypto.subtle.generateKey(
+        { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256", publicExponent: new Uint8Array([1, 0, 1]), modulusLength: 2048 },
+        true, ["sign", "verify"]
+    );
 
-  return Buffer.from(cert.rawData).toString('hex');
+    const cert = await x509.X509CertificateGenerator.createSelfSigned({
+        serialNumber: "01",
+        name: "CN=Dynamic Test Card",
+        notBefore: new Date(),
+        notAfter: new Date(Date.now() + 86400000 * 365), // 1 year
+        signingAlgorithm: { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+        keys: keys,
+    });
+
+    return Buffer.from(cert.rawData).toString('hex');
 }
 
 /**
