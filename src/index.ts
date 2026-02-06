@@ -340,6 +340,7 @@ function addDivForReader(readerName: string, initialState?: SmartCardReaderState
 
   const readCertificatesButton = document.createElement("button");
   readCertificatesButton.textContent = "Read Certificate for Card Authentication";
+  readCertificatesButton.id = "btn-read-certificate";
   readCertificatesButton.addEventListener('click', () => handleReadCertificateCommand(readerName));
 
   p.appendChild(span);
@@ -784,11 +785,9 @@ async function handleReadCertificateCommand(readerName: string) {
   }
 
   elements.certDiv.textContent = ""; // Clear previous content
+  const resultHolder = { value: undefined as ArrayBuffer | undefined };
 
   try {
-    // Using an object to hold the result for better type inference after async callback.
-    const resultHolder = { value: undefined as ArrayBuffer | undefined };
-
     await connection.startTransaction(
       async () => {
         try {
@@ -799,7 +798,13 @@ async function handleReadCertificateCommand(readerName: string) {
           throw transactionError;
         }
       });
+      console.log("Transaction success");
 
+  }catch(e:any){
+    console.error("Transaction Error: ", e.message);
+  }
+
+  try {
     // resultHolder.value is ArrayBuffer | undefined after transaction.
     // Use instanceof for a strong type guard.
     if (resultHolder.value instanceof ArrayBuffer) {
