@@ -801,7 +801,6 @@ async function handleReadCertificateCommand(readerName: string) {
         }
       });
 
-
     // resultHolder.value is ArrayBuffer | undefined after transaction.
     // Use instanceof for a strong type guard.
     if (resultHolder.value instanceof ArrayBuffer) {

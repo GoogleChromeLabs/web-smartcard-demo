@@ -1,16 +1,20 @@
 import { describe, it, before, after, afterEach } from 'node:test';
 import assert from 'node:assert';
-import * as path from "path";
-import * as wbnSign from "wbn-sign";
-import * as fs from "fs";
+import * as fs from 'fs';
+import * as path from 'path';
+import * as http from 'http';
 import * as puppeteer from "puppeteer-core";
 import { constructBerTlv, generateSelfSignedCertHex } from './test-utils.js';
 
 const CONFIG = {
   CONNECTION_URL: 'http://localhost:9222',
   VIRTUAL_READER_NAME: "Virtual Cert Reader",
-  BUNDLE_PATH: path.join(process.cwd(), "dist", "smart_card_demo.swbn"),
   VALID_ATR: Buffer.from('3B0102', 'hex').toString('base64'),
+  APP_ID: 'isolated-app://w2gqjem6b4m7vhiqpjr3btcpp7dxfyjt6h4uuyuxklcsmygtgncaaaac',
+  DEV_SERVER_PORT: 8080,
+  DEV_SERVER_URL: 'http://localhost:8080',
+  CERT_COMMON_NAME: "Dynamic Test Card",
+  DIST_DIR: path.join(process.cwd(), 'dist')
 };
 
 const APDU = {
@@ -21,29 +25,83 @@ const APDU = {
 };
 
 let mockCertHex = "";
+let devServer;
+
+async function startDevServer(port, directory) {
+  return new Promise((resolve) => {
+    const server = http.createServer((req, res) => {
+      const safePath = path.normalize(req.url).replace(/^(\.\.[\/\\])+/, '');
+      let filePath = path.join(directory, safePath === '/' ? 'index.html' : safePath);
+
+      fs.readFile(filePath, (err, data) => {
+        if (err) {
+          res.writeHead(404);
+          res.end('Not Found');
+          return;
+        }
+        if (filePath.endsWith('.html')) res.setHeader('Content-Type', 'text/html');
+        if (filePath.endsWith('.js')) res.setHeader('Content-Type', 'application/javascript');
+        if (filePath.endsWith('.json') || filePath.endsWith('.webmanifest')) res.setHeader('Content-Type', 'application/manifest+json');
+
+        res.writeHead(200);
+        res.end(data);
+      });
+    });
+
+    const sockets = new Set();
+    server.on('connection', (socket) => {
+      sockets.add(socket);
+      socket.on('close', () => sockets.delete(socket));
+    });
+
+    // Attach a helper method to force-close all connections
+    server.forceClose = async () => {
+      for (const socket of sockets) {
+        socket.destroy();
+      }
+      return new Promise((cb) => server.close(cb));
+    };
+
+    server.listen(port, () => {
+      console.log(`🌍 Dev Server started at http://localhost:${port} serving ${directory}`);
+      resolve(server);
+    });
+  });
+}
 
 describe('Smart Card Read Certificate Test', () => {
   let browser, browserSession, appPage, appClient, manifestId;
 
   before(async () => {
-    console.log("⚙️ Generating valid X.509 certificate...");
-    mockCertHex = await generateSelfSignedCertHex();
-    console.log(`✅ Certificate generated (${mockCertHex.length / 2} bytes)`);
+    devServer = await startDevServer(CONFIG.DEV_SERVER_PORT, CONFIG.DIST_DIR);
 
-    assert.ok(fs.existsSync(CONFIG.BUNDLE_PATH), `Bundle not found at: ${CONFIG.BUNDLE_PATH}`);
-    const bundleContent = new Uint8Array(await fs.promises.readFile(CONFIG.BUNDLE_PATH));
-    const appId = wbnSign.getBundleId(bundleContent);
-    manifestId = `isolated-app://${appId}`;
+    manifestId = CONFIG.APP_ID;
+    console.log("⚙️ Generating valid X.509 certificate...");
+    mockCertHex = await generateSelfSignedCertHex(CONFIG.CERT_COMMON_NAME);
 
     console.log(`\n📞 Connecting to Chrome at ${CONFIG.CONNECTION_URL}...`);
     browser = await puppeteer.connect({ browserURL: CONFIG.CONNECTION_URL, defaultViewport: null });
     browserSession = await browser.target().createCDPSession();
 
     try {
+      const tempPage = await browser.newPage();
+      const response = await tempPage.goto(CONFIG.DEV_SERVER_URL, { timeout: 2000 });
+      if (!response.ok()) throw new Error(`Server returned ${response.status()}`);
+      await tempPage.close();
+    } catch (e) {
+      console.warn(`⚠️ Warning: Browser cannot reach ${CONFIG.DEV_SERVER_URL}. If testing remotely, ensure SSH tunnel is active.`);
+    }
+
+    try {
       await browserSession.send("PWA.getOsAppState", { manifestId });
+      console.log("✅ App is already installed.");
     } catch (e) {
       console.log("⬇️ App not installed. Installing...");
-      await browserSession.send("PWA.install", { manifestId, installUrlOrBundleUrl: `file://${CONFIG.BUNDLE_PATH}` });
+      await browserSession.send("PWA.install", {
+        manifestId,
+        installUrlOrBundleUrl: CONFIG.DEV_SERVER_URL
+      });
+      console.log("✅ App was successfully installed.");
     }
 
     await browserSession.send("PWA.launch", { manifestId });
@@ -57,6 +115,23 @@ describe('Smart Card Read Certificate Test', () => {
 
   after(async () => {
     if (browser) await browser.disconnect();
+    if (devServer) {
+      await devServer.forceClose();
+      console.log("🛑 Dev Server stopped.");
+    }
+  });
+
+  afterEach(async () => {
+    if (!appPage) return;
+    const isConnected = await appPage.evaluate(() => {
+      const disconnectBtn = document.getElementById('btn-disconnect');
+      return disconnectBtn && !disconnectBtn.disabled;
+    });
+
+    if (isConnected) {
+      await click('#btn-disconnect');
+      await appPage.waitForFunction(() => document.body.innerText.includes('Disconnected.'));
+    }
   });
 
   const click = async (selector) => {
@@ -66,9 +141,9 @@ describe('Smart Card Read Certificate Test', () => {
   };
 
   /**
- * Checks the UI for any visible error messages.
- * Throws an error if a fatal application error is found.
- */
+   * Checks the UI for any visible error messages.
+   * Throws an error if a fatal application error is found.
+   */
   const checkForAppErrors = async () => {
     const errorText = await appPage.evaluate(() => {
       // Find all divs that contain "Error:"
@@ -92,18 +167,6 @@ describe('Smart Card Read Certificate Test', () => {
     }
   };
 
-  afterEach(async () => {
-    const isConnected = await appPage.evaluate(() => {
-      const disconnectBtn = document.getElementById('btn-disconnect');
-      return disconnectBtn && !disconnectBtn.disabled;
-    });
-
-    if (isConnected) {
-      await click('#btn-disconnect');
-      await appPage.waitForFunction(() => document.body.innerText.includes('Disconnected.'));
-    }
-  });
-
   it('should connect and disconnect successfully', async () => {
     await click('#refresh-readers');
     await appPage.waitForSelector(`xpath///span[contains(text(), '${CONFIG.VIRTUAL_READER_NAME}')]`);
@@ -118,25 +181,19 @@ describe('Smart Card Read Certificate Test', () => {
 
     await click('#btn-disconnect');
     await appPage.waitForFunction(() => document.body.innerText.includes('Disconnected.'));
-
     console.log('✅ Basic Connectivity Passed');
   });
 
   it('should connect, read certificate, display it correctly and disconnect', async () => {
     await click('#refresh-readers');
-
-    // Wait for reader to appear in DOM
-    const readerXpath = `xpath///span[contains(text(), '${CONFIG.VIRTUAL_READER_NAME}')]`;
-    await appPage.waitForSelector(readerXpath);
+    await appPage.waitForSelector(`xpath///span[contains(text(), '${CONFIG.VIRTUAL_READER_NAME}')]`);
 
     await click('#btn-connect');
     await appPage.waitForFunction(() => document.body.innerText.includes('Connected with protocol: t1'));
-    console.log("✅ Connected.");
 
     await click('#btn-read-certificate');
 
     try {
-      // Wait for the success table OR a failure error message
       await appPage.waitForFunction(
         () => document.querySelector('#readers-list table') || document.body.innerText.includes('Error:'),
         { timeout: 8000 }
@@ -147,9 +204,9 @@ describe('Smart Card Read Certificate Test', () => {
 
     await checkForAppErrors();
 
-    // Verify Table Content
     const tableContent = await appPage.evaluate(() => document.body.innerText);
     assert.ok(tableContent.includes("X.509 Certificate"), "Header title missing");
+    assert.ok(tableContent.includes(CONFIG.CERT_COMMON_NAME), "Certificate Subject missing");
 
     console.log("🎉 Success: Certificate displayed!");
 
@@ -204,12 +261,8 @@ async function setupEmulation(client) {
     else if (ins === APDU.Instruction.GetData) {
       console.log("   -> Replying GET DATA: CERT");
       const rawCertBytes = Buffer.from(mockCertHex, 'hex');
-
-      // Wrap in TLV layers (Tag 70 inside Tag 53)
       const certTlv = constructBerTlv(APDU.Tag.Certificate, rawCertBytes);
       const dataTlv = constructBerTlv(APDU.Tag.DiscretionaryData, certTlv);
-
-      // Append Status Word
       responseBuffer = Buffer.concat([dataTlv, APDU.SW_SUCCESS]);
     }
 

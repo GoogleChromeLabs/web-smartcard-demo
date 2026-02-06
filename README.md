@@ -120,26 +120,18 @@ You launch Chrome (the Host) with specific debugging flags, and a Node.js test s
 
 You need a Chrome instance listening on port 9222 with PWA debugging enabled.
 
-#### Option A: Local Chromium Build
-Run your custom Chrome binary.
+#### Option A: Physical ChromeOS Device
+
+Configure the device via SSH to allow remote debugging and PWA control. 
+_Note: This requires the device to be in Developer Mode with SSH enabled. See the [ChromeOS Web Testing Guide] for initial setup instructions._
+
+1. SSH into the device with Port Forwarding Use the following command to connect to your device. 
+This forwards the remote debugging port (9222) to your machine and your local dev server (8080) to the device.
 ```bash
-~/chrome/src/out/current_link/chrome \
-  --remote-debugging-port=9222 \
-  --enable-features=IsolatedWebApps,IsolatedWebAppDevMode \
-  --enable-devtools-pwa-handler \
-  --system-developer-mode
+ssh -L 9222:localhost:9222 -R 8080:localhost:8080 root@<device_IP_ADDRESS>
 ```
 
-#### Option B: Physical ChromeOS Device (DUT)
-Configure the DUT via SSH to allow remote debugging and PWA control.
-
-1. SSH into the DUT with Port Forwarding Use the following command to connect to your DUT. 
-This forwards the remote debugging port (9222) to your machine and your local dev server (8080) to the DUT.
-```bash
-ssh -L 9222:localhost:9222 -R 8080:localhost:8080 root@<DUT_IP_ADDRESS>
-```
-
-2. Configure Chrome Flags Once logged into the DUT, edit /etc/chrome_dev.conf to enable the required features:
+2. Configure Chrome Flags Once logged into the device, edit /etc/chrome_dev.conf to enable the required features:
 ```bash
 echo "--remote-debugging-port=9222" >> /etc/chrome_dev.conf
 echo "--enable-features=IsolatedWebApps,IsolatedWebAppDevMode" >> /etc/chrome_dev.conf
@@ -151,16 +143,30 @@ echo "--enable-devtools-pwa-handler" >> /etc/chrome_dev.conf
 restart ui
 ```
 
-Keep the SSH session open. This maintains the tunnel that allows the test script to talk to the DUT.
+Keep the SSH session open to maintain the tunnel.
+
+#### Option B: Local Chromium Build (linux-chromeos)
+
+_Note: This option applies primarily to Chromium engineers running a linux-chromeos build (Chromium on Linux targeting ChromeOS)._
+
+Run your custom Chrome binary with the following flags:
+```bash
+${PATH_TO_CHROMIUM_OUT_DIRECTORY}/chrome \
+  --remote-debugging-port=9222 \
+  --enable-features=IsolatedWebApps,IsolatedWebAppDevMode \
+  --enable-devtools-pwa-handler \
+  --system-developer-mode
+```
 
 ### Step 2: Run the Test Runner
 Once Chrome is listening on localhost:9222 (via the SSH tunnel or locally), run the test script.
 
-Note: If testing on a physical DUT, ensure the .swbn file is copied to the device at the same path expected by the script, or update the script to point to the file location on the DUT.
-
 ```Bash
 node tests/test-demo.js
 ```
+
+💡 The test script uses Dev Proxy mode to install IWA from http://localhost:8080 instead of a file.
+
 
 [Web Smart Card API]: https://wicg.github.io/web-smart-card/
 [PC/SC]: https://en.wikipedia.org/wiki/PC/SC
@@ -170,3 +176,4 @@ node tests/test-demo.js
 [YubiKey Manager]: https://developers.yubico.com/yubikey-manager-qt/
 [wbn-sign-gcp-kms]: https://github.com/chromeos/wbn-sign-gcp-kms
 [GCP KMS Node.js client]: https://cloud.google.com/nodejs/docs/reference/kms/latest
+[ChromeOS Web Testing Guide]:https://www.chromium.org/chromium-os/developer-library/guides/testing/web-testing
