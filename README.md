@@ -123,6 +123,7 @@ You need a Chrome instance listening on port 9222 with PWA debugging enabled.
 #### Option A: Physical ChromeOS Device
 
 Configure the device via SSH to allow remote debugging and PWA control. 
+
 _Note: This requires the device to be in Developer Mode with SSH enabled. See the [ChromeOS Web Testing Guide] for initial setup instructions._
 
 1. SSH into the device with Port Forwarding Use the following command to connect to your device. 
@@ -162,7 +163,7 @@ ${PATH_TO_CHROMIUM_OUT_DIRECTORY}/chrome \
 Once Chrome is listening on localhost:9222 (via the SSH tunnel or locally), run the test script.
 
 ```Bash
-node tests/test-demo.js
+node tests/test-e2e.js
 ```
 
 💡 The test script uses Dev Proxy mode to install IWA from http://localhost:8080 instead of a file.
