@@ -330,14 +330,17 @@ function addDivForReader(readerName: string, initialState?: SmartCardReaderState
 
   const connectButton = document.createElement("button");
   connectButton.textContent = "Connect";
+  connectButton.id = "btn-connect";
   connectButton.addEventListener('click', () => handleConnect(readerName));
 
   const disconnectButton = document.createElement("button");
   disconnectButton.textContent = "Disconnect";
+  disconnectButton.id = "btn-disconnect";
   disconnectButton.addEventListener('click', () => handleDisconnect(readerName));
 
   const readCertificatesButton = document.createElement("button");
   readCertificatesButton.textContent = "Read Certificate for Card Authentication";
+  readCertificatesButton.id = "btn-read-certificate";
   readCertificatesButton.addEventListener('click', () => handleReadCertificateCommand(readerName));
 
   p.appendChild(span);
