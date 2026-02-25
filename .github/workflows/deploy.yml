@@ -58,7 +58,7 @@ jobs:
         run: |
           set -e
           ORIGINAL_SWBN_PATH="./dist/smart_card_demo.swbn" # Expected output from webpack.wbn.js
-          VERSIONED_SWBN_FILENAME="smart_card_demo_${{ steps.package_version.outputs.version }}.swbn"
+          VERSIONED_SWBN_FILENAME="smart_card_demo_${STEPS_PACKAGE_VERSION_OUTPUTS_VERSION}.swbn"
           VERSIONED_SWBN_PATH="./dist/$VERSIONED_SWBN_FILENAME"
 
           if [ ! -f "$ORIGINAL_SWBN_PATH" ]; then
@@ -71,16 +71,18 @@ jobs:
 
           echo "swbn_path=$VERSIONED_SWBN_PATH" >> $GITHUB_OUTPUT
           echo "swbn_filename=$VERSIONED_SWBN_FILENAME" >> $GITHUB_OUTPUT
+        env:
+          STEPS_PACKAGE_VERSION_OUTPUTS_VERSION: ${{ steps.package_version.outputs.version }}
 
       - name: Prepare update.json
         id: update_json_prep
         run: |
           set -e
 
-          SWBN_FILENAME_FOR_JSON="${{ steps.swbn_asset_prep.outputs.swbn_filename }}"
-          NEW_ENTRY_SRC="https://github.com/${{ github.repository }}/releases/download/${{ steps.package_version.outputs.version }}/$SWBN_FILENAME_FOR_JSON"
+          SWBN_FILENAME_FOR_JSON="${STEPS_SWBN_ASSET_PREP_OUTPUTS_SWBN_FILENAME}"
+          NEW_ENTRY_SRC="https://github.com/${{ github.repository }}/releases/download/${STEPS_PACKAGE_VERSION_OUTPUTS_VERSION}/$SWBN_FILENAME_FOR_JSON"
 
-          LATEST_RELEASE_TAG=${{ steps.package_version.outputs.previous_version }}
+          LATEST_RELEASE_TAG=${STEPS_PACKAGE_VERSION_OUTPUTS_PREVIOUS_VERSION}
 
           EXISTING_UPDATE_JSON_CONTENT="{\"versions\": []}" # Default if no previous version or file found
           if [ -n "$LATEST_RELEASE_TAG" ]; then
@@ -103,7 +105,7 @@ jobs:
 
           # Add new version entry, prepending to the 'versions' array for newest first
           UPDATED_JSON_CONTENT=$(echo "$EXISTING_UPDATE_JSON_CONTENT" | jq \
-            --arg version "${{ steps.package_version.outputs.version }}" \
+            --arg version "${STEPS_PACKAGE_VERSION_OUTPUTS_VERSION}" \
             --arg src "$NEW_ENTRY_SRC" \
             '.versions |= [{ "version": $version, "src": $src }] + .')
 
@@ -113,13 +115,18 @@ jobs:
           echo "update_json_path=$(pwd)/update.json" >> $GITHUB_OUTPUT
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          STEPS_SWBN_ASSET_PREP_OUTPUTS_SWBN_FILENAME: ${{ steps.swbn_asset_prep.outputs.swbn_filename }}
+          STEPS_PACKAGE_VERSION_OUTPUTS_VERSION: ${{ steps.package_version.outputs.version }}
+          STEPS_PACKAGE_VERSION_OUTPUTS_PREVIOUS_VERSION: ${{ steps.package_version.outputs.previous_version }}
 
       - name: Create Git tag
         run: |
-          git config user.name "${{ github.actor }}"
-          git config user.email "${{ github.actor }}@users.noreply.github.com"
-          git tag -a "${{ steps.package_version.outputs.version }}" -m "Release ${{ steps.package_version.outputs.version }}"
-          git push origin "${{ steps.package_version.outputs.version }}"
+          git config user.name "${GITHUB_ACTOR}"
+          git config user.email "${GITHUB_ACTOR}@users.noreply.github.com"
+          git tag -a "${STEPS_PACKAGE_VERSION_OUTPUTS_VERSION}" -m "Release ${STEPS_PACKAGE_VERSION_OUTPUTS_VERSION}"
+          git push origin "${STEPS_PACKAGE_VERSION_OUTPUTS_VERSION}"
+        env:
+          STEPS_PACKAGE_VERSION_OUTPUTS_VERSION: ${{ steps.package_version.outputs.version }}
 
       - name: Create GitHub Release
         env:
@@ -127,10 +134,11 @@ jobs:
           GH_REPO: ${{ github.repository }}
           SWBN_ASSET_PATH: ${{ steps.swbn_asset_prep.outputs.swbn_path }}
           UPDATE_JSON_ASSET_PATH: ${{ steps.update_json_prep.outputs.update_json_path }}
+          STEPS_PACKAGE_VERSION_OUTPUTS_VERSION: ${{ steps.package_version.outputs.version }}
         run: |
           set -e
           WEB_BUNDLE_ID="cpt62davrxj4yzauslsummydorzgy2kcnhbayaziceuqlzhaue7qaaic"
-          UPDATE_MANIFEST_URL="https://github.com/$GH_REPO/releases/download/${{ steps.package_version.outputs.version }}/update.json"
+          UPDATE_MANIFEST_URL="https://github.com/$GH_REPO/releases/download/${STEPS_PACKAGE_VERSION_OUTPUTS_VERSION}/update.json"
 
           # Prepare release notes to a temporary file for correct formatting
           NOTES_FILE="release_notes.md"
@@ -138,7 +146,7 @@ jobs:
 
           ASSET_ARGS=("$SWBN_ASSET_PATH" "$UPDATE_JSON_ASSET_PATH")
 
-          gh release create "${{ steps.package_version.outputs.version }}" "${ASSET_ARGS[@]}" \
+          gh release create "${STEPS_PACKAGE_VERSION_OUTPUTS_VERSION}" "${ASSET_ARGS[@]}" \
             --repo "$GH_REPO" \
-            --title "Release ${{ steps.package_version.outputs.version }}" \
+            --title "Release ${STEPS_PACKAGE_VERSION_OUTPUTS_VERSION}" \
             --notes-file "$NOTES_FILE" # Changed from --notes to --notes-file
