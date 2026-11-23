@@ -54,44 +54,48 @@ export function deserializeNumber(bytes: Uint8Array,
                            numberByteSize:number): number {
   assert(bytesOffset >= 0 && bytesOffset < bytes.byteLength,
          "deserializeNumber: invalid bytesOffset");
-  assert(numberByteSize > 0 && numberByteSize <= (bytes.byteLength - bytesOffset),
+  assert(numberByteSize > 0 && numberByteSize <= 4 &&
+         numberByteSize <= (bytes.byteLength - bytesOffset),
         "deserializeNumber: invalid numberByteSize");
 
-  let currentDigit = numberByteSize;
-  let n: number = 0
-  while (currentDigit > 0) {
-    let i = bytesOffset + (numberByteSize - currentDigit);
-    n |= bytes[i] << (8 * (currentDigit - 1))
-    currentDigit--;
+  let n = 0;
+  for (let i = bytesOffset; i < bytesOffset + numberByteSize; i++) {
+    n = n * 256 + bytes[i];
   }
   return n;
 }
 
-// Reads the length field of a BER entry
-export function readLength(bytes: Uint8Array, bytesOffset:number): BERLength {
+/**
+ * Reads the length field of a BER entry.
+ *
+ * @param bytes - The buffer containing the BER-encoded data.
+ * @param bytesOffset - Offset of the first byte of the length field in `bytes`.
+ * @returns The decoded value length and the offset where the value starts.
+ */
+export function readLength(bytes: Uint8Array, bytesOffset: number): BERLength {
   let i = bytesOffset;
-  if (bytes[i] < 128) {
+  const firstByte = bytes[i++];
+  let length: number;
+
+  if (firstByte < 128) {
     // Definite, short
-    return {
-      length: bytes[i],
-      valueOffset: bytesOffset + 1
-    };
-  } else if (bytes[i] === 128) {
+    length = firstByte;
+  } else if (firstByte === 128) {
     // Indefinite
     // Assuming the two last bytes are End-of-Content (EOC) identifiers.
-    return {
-      length: bytes.byteLength - (bytesOffset + 1) - 2,
-      valueOffset: bytesOffset + 1
-    };
+    length = bytes.byteLength - i - 2;
   } else {
     // Definite, long
-    let numberByteSize = bytes[i++] & 127;
-    let n = deserializeNumber(bytes, i, numberByteSize);
-    return {
-      length: n,
-      valueOffset: i + numberByteSize
-    };
+    const numberByteSize = firstByte & 127;
+    length = deserializeNumber(bytes, i, numberByteSize);
+    i += numberByteSize;
   }
+
+  if (length < 0 || i + length > bytes.byteLength) {
+    throw Error('Invalid BER length: value extends past end of buffer');
+  }
+
+  return { length, valueOffset: i };
 }
 
 // Given a buffer filled with consecutive BER entries, returns the value of the
