@@ -28,3 +28,9 @@ jobs:
 
     - name: Run tests
       run: npm test
+
+    - name: Build the signed web bundle with a throwaway key
+      run: |
+        PRIVATE_KEY=$(openssl genpkey -algorithm ed25519)
+        export PRIVATE_KEY
+        npm run build
