@@ -37,8 +37,12 @@ dependencies and automate the build process. To get started clone the
 repository and install dependencies by running,
 
 ```sh
-npm install
+npm ci
 ```
+
+`npm ci` installs exactly the versions recorded in `package-lock.json`. Use
+`npm install` only when you mean to add or upgrade dependencies, and commit the
+updated lockfile.
 
 Chrome supports two options for Isolated Web App development. In "proxy" mode
 you run a local development server as you would for normal web app development
