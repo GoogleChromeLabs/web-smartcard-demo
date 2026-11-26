@@ -8,6 +8,10 @@ on:
         type: environment
         required: true
 
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
 jobs:
   release:
     name: Create Release
@@ -15,12 +19,14 @@ jobs:
     environment: ${{ inputs.environment }}
     permissions:
       contents: write
+    env:
+      EXPECTED_WEB_BUNDLE_ID: cpt62davrxj4yzauslsummydorzgy2kcnhbayaziceuqlzhaue7qaaic
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
+          persist-credentials: false
 
       - name: Extract version from package.json
         id: package_version
@@ -28,25 +34,26 @@ jobs:
           VERSION=$(jq -r .version package.json)
           PREVIOUS_VERSION=$(gh release list --repo '${{ github.repository }}' --json tagName --jq '.[0].tagName')
 
-          if [ $PREVIOUS_VERSION = $VERSION ]; then
+          if [ "$PREVIOUS_VERSION" = "$VERSION" ]; then
             echo "A release of this version already exists."
             exit 1
           else
             echo "${PREVIOUS_VERSION:+Last release was }${PREVIOUS_VERSION:-No prior release}, building now $VERSION."
           fi
 
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "previous_version=$PREVIOUS_VERSION" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "previous_version=$PREVIOUS_VERSION" >> "$GITHUB_OUTPUT"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 20
+          node-version: 26
+          package-manager-cache: false
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci --ignore-scripts
 
       - name: Build the signed web bundle
         run: npm run build
@@ -69,8 +76,8 @@ jobs:
           mv "$ORIGINAL_SWBN_PATH" "$VERSIONED_SWBN_PATH"
           echo "Renamed SWBN to $VERSIONED_SWBN_FILENAME"
 
-          echo "swbn_path=$VERSIONED_SWBN_PATH" >> $GITHUB_OUTPUT
-          echo "swbn_filename=$VERSIONED_SWBN_FILENAME" >> $GITHUB_OUTPUT
+          echo "swbn_path=$VERSIONED_SWBN_PATH" >> "$GITHUB_OUTPUT"
+          echo "swbn_filename=$VERSIONED_SWBN_FILENAME" >> "$GITHUB_OUTPUT"
         env:
           STEPS_PACKAGE_VERSION_OUTPUTS_VERSION: ${{ steps.package_version.outputs.version }}
 
@@ -112,7 +119,7 @@ jobs:
           echo "$UPDATED_JSON_CONTENT" > update.json
           echo "Generated update.json:"
           cat update.json
-          echo "update_json_path=$(pwd)/update.json" >> $GITHUB_OUTPUT
+          echo "update_json_path=$(pwd)/update.json" >> "$GITHUB_OUTPUT"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           STEPS_SWBN_ASSET_PREP_OUTPUTS_SWBN_FILENAME: ${{ steps.swbn_asset_prep.outputs.swbn_filename }}
@@ -124,8 +131,13 @@ jobs:
           git config user.name "${GITHUB_ACTOR}"
           git config user.email "${GITHUB_ACTOR}@users.noreply.github.com"
           git tag -a "${STEPS_PACKAGE_VERSION_OUTPUTS_VERSION}" -m "Release ${STEPS_PACKAGE_VERSION_OUTPUTS_VERSION}"
-          git push origin "${STEPS_PACKAGE_VERSION_OUTPUTS_VERSION}"
+          AUTH_HEADER="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w 0)"
+          GIT_CONFIG_COUNT=1 \
+            GIT_CONFIG_KEY_0="http.https://github.com/.extraheader" \
+            GIT_CONFIG_VALUE_0="$AUTH_HEADER" \
+            git push origin "refs/tags/${STEPS_PACKAGE_VERSION_OUTPUTS_VERSION}"
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           STEPS_PACKAGE_VERSION_OUTPUTS_VERSION: ${{ steps.package_version.outputs.version }}
 
       - name: Create GitHub Release
@@ -137,12 +149,11 @@ jobs:
           STEPS_PACKAGE_VERSION_OUTPUTS_VERSION: ${{ steps.package_version.outputs.version }}
         run: |
           set -e
-          WEB_BUNDLE_ID="cpt62davrxj4yzauslsummydorzgy2kcnhbayaziceuqlzhaue7qaaic"
           UPDATE_MANIFEST_URL="https://github.com/$GH_REPO/releases/download/${STEPS_PACKAGE_VERSION_OUTPUTS_VERSION}/update.json"
 
           # Prepare release notes to a temporary file for correct formatting
           NOTES_FILE="release_notes.md"
-          echo -e "---\n\n\`\`\`json\n[\n  {\n    \"web_bundle_id\": \"$WEB_BUNDLE_ID\",\n    \"update_manifest_url\": \"$UPDATE_MANIFEST_URL\"\n  }\n]\n\`\`\`" > "$NOTES_FILE"
+          echo -e "---\n\n\`\`\`json\n[\n  {\n    \"web_bundle_id\": \"$EXPECTED_WEB_BUNDLE_ID\",\n    \"update_manifest_url\": \"$UPDATE_MANIFEST_URL\"\n  }\n]\n\`\`\`" > "$NOTES_FILE"
 
           ASSET_ARGS=("$SWBN_ASSET_PATH" "$UPDATE_JSON_ASSET_PATH")
 

@@ -1,25 +1,36 @@
 name: Run Tests
 on: [push, pull_request]
+
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
 
     strategy:
       matrix:
-        node-version: [16, 18, 20]
+        node-version: [22, 24, 26]
 
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
 
     - name: Set up Node.js ${{ matrix.node-version }}
-      uses: actions/setup-node@v4
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
       with:
         node-version: ${{ matrix.node-version }}
 
     - name: Install dependencies
-      run: npm install
+      run: npm ci --ignore-scripts
 
     - name: Run tests
       run: npm test
 
+    - name: Build the signed web bundle with a throwaway key
+      run: |
+        PRIVATE_KEY=$(openssl genpkey -algorithm ed25519)
+        export PRIVATE_KEY
+        npm run build

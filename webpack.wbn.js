@@ -17,7 +17,11 @@
 const { merge } = require("webpack-merge");
 const common = require("./webpack.common.js");
 const WebBundlePlugin = require("webbundle-webpack-plugin");
-const { parsePemKey, NodeCryptoSigningStrategy } = require("wbn-sign");
+const {
+  parsePemKey,
+  NodeCryptoSigningStrategy,
+  WebBundleId,
+} = require("wbn-sign");
 
 require("dotenv").config();
 
@@ -49,6 +53,15 @@ if (privateKeyPath) {
   privateKey = parsePemKey(
     Buffer.from(privateKeyText, "utf-8"),
     privateKeyPassword,
+  );
+}
+
+const expectedWebBundleId = process.env.EXPECTED_WEB_BUNDLE_ID;
+const webBundleId = new WebBundleId(privateKey).serialize();
+if (expectedWebBundleId !== undefined && webBundleId !== expectedWebBundleId) {
+  throw new Error(
+    `The key yields web bundle ID ${webBundleId}, ` +
+      `but EXPECTED_WEB_BUNDLE_ID is ${expectedWebBundleId}.`,
   );
 }
 
