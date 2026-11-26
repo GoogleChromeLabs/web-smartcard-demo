@@ -82,6 +82,8 @@ the following contents (replace `...` with actual values), it will be automatica
 PRIVATE_KEY="..."
 PRIVATE_KEY_PATH="..."
 PRIVATE_KEY_PASSWORD="..."
+# Optional: fail unless the key yields this web bundle ID.
+EXPECTED_WEB_BUNDLE_ID="..."
 ```
 
 When this is ready, run

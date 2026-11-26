@@ -8,6 +8,10 @@ on:
         type: environment
         required: true
 
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
 jobs:
   release:
     name: Create Release
@@ -15,6 +19,8 @@ jobs:
     environment: ${{ inputs.environment }}
     permissions:
       contents: write
+    env:
+      EXPECTED_WEB_BUNDLE_ID: cpt62davrxj4yzauslsummydorzgy2kcnhbayaziceuqlzhaue7qaaic
 
     steps:
       - name: Checkout repository
@@ -143,12 +149,11 @@ jobs:
           STEPS_PACKAGE_VERSION_OUTPUTS_VERSION: ${{ steps.package_version.outputs.version }}
         run: |
           set -e
-          WEB_BUNDLE_ID="cpt62davrxj4yzauslsummydorzgy2kcnhbayaziceuqlzhaue7qaaic"
           UPDATE_MANIFEST_URL="https://github.com/$GH_REPO/releases/download/${STEPS_PACKAGE_VERSION_OUTPUTS_VERSION}/update.json"
 
           # Prepare release notes to a temporary file for correct formatting
           NOTES_FILE="release_notes.md"
-          echo -e "---\n\n\`\`\`json\n[\n  {\n    \"web_bundle_id\": \"$WEB_BUNDLE_ID\",\n    \"update_manifest_url\": \"$UPDATE_MANIFEST_URL\"\n  }\n]\n\`\`\`" > "$NOTES_FILE"
+          echo -e "---\n\n\`\`\`json\n[\n  {\n    \"web_bundle_id\": \"$EXPECTED_WEB_BUNDLE_ID\",\n    \"update_manifest_url\": \"$UPDATE_MANIFEST_URL\"\n  }\n]\n\`\`\`" > "$NOTES_FILE"
 
           ASSET_ARGS=("$SWBN_ASSET_PATH" "$UPDATE_JSON_ASSET_PATH")
 
