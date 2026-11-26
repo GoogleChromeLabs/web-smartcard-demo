@@ -28,15 +28,15 @@ jobs:
           VERSION=$(jq -r .version package.json)
           PREVIOUS_VERSION=$(gh release list --repo '${{ github.repository }}' --json tagName --jq '.[0].tagName')
 
-          if [ $PREVIOUS_VERSION = $VERSION ]; then
+          if [ "$PREVIOUS_VERSION" = "$VERSION" ]; then
             echo "A release of this version already exists."
             exit 1
           else
             echo "${PREVIOUS_VERSION:+Last release was }${PREVIOUS_VERSION:-No prior release}, building now $VERSION."
           fi
 
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "previous_version=$PREVIOUS_VERSION" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "previous_version=$PREVIOUS_VERSION" >> "$GITHUB_OUTPUT"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -69,8 +69,8 @@ jobs:
           mv "$ORIGINAL_SWBN_PATH" "$VERSIONED_SWBN_PATH"
           echo "Renamed SWBN to $VERSIONED_SWBN_FILENAME"
 
-          echo "swbn_path=$VERSIONED_SWBN_PATH" >> $GITHUB_OUTPUT
-          echo "swbn_filename=$VERSIONED_SWBN_FILENAME" >> $GITHUB_OUTPUT
+          echo "swbn_path=$VERSIONED_SWBN_PATH" >> "$GITHUB_OUTPUT"
+          echo "swbn_filename=$VERSIONED_SWBN_FILENAME" >> "$GITHUB_OUTPUT"
         env:
           STEPS_PACKAGE_VERSION_OUTPUTS_VERSION: ${{ steps.package_version.outputs.version }}
 
@@ -112,7 +112,7 @@ jobs:
           echo "$UPDATED_JSON_CONTENT" > update.json
           echo "Generated update.json:"
           cat update.json
-          echo "update_json_path=$(pwd)/update.json" >> $GITHUB_OUTPUT
+          echo "update_json_path=$(pwd)/update.json" >> "$GITHUB_OUTPUT"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           STEPS_SWBN_ASSET_PREP_OUTPUTS_SWBN_FILENAME: ${{ steps.swbn_asset_prep.outputs.swbn_filename }}
