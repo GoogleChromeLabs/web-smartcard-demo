@@ -2,7 +2,7 @@
   "id": "/",
   "short_name": "Smart Card Demo",
   "name": "Smart Card Demo",
-  "version": "0.0.6",
+  "version": "0.0.7",
   "icons": [
     {
       "src": "/images/smart-id-128.png",
