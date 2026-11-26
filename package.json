@@ -53,6 +53,6 @@
     "test": "jest"
   },
   "dependencies": {
-    "@peculiar/x509": "^1.12.3"
+    "@peculiar/x509": "1.14.3"
   }
 }
